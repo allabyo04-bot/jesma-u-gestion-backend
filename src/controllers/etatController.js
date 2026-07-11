@@ -1,0 +1,138 @@
+const prisma = require('../lib/prisma');
+
+function debutJournee(date) {
+  const d = date ? new Date(date) : new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function finJournee(date) {
+  const d = date ? new Date(date) : new Date();
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+function construirePeriode(dateDebut, dateFin) {
+  const where = {};
+  if (dateDebut || dateFin) {
+    where.createdAt = {};
+    if (dateDebut) where.createdAt.gte = debutJournee(dateDebut);
+    if (dateFin) where.createdAt.lte = finJournee(dateFin);
+  }
+  return where;
+}
+
+function construirePeriodeChamp(champ, dateDebut, dateFin) {
+  const where = {};
+  if (dateDebut || dateFin) {
+    where[champ] = {};
+    if (dateDebut) where[champ].gte = debutJournee(dateDebut);
+    if (dateFin) where[champ].lte = finJournee(dateFin);
+  }
+  return where;
+}
+
+// GET /api/etats/marge-produits?dateDebut=&dateFin=
+// Marge = (prix de vente unitaire au moment de la vente - prixAchat courant de l'article) x quantité
+// Note : on utilise le prixAchat COURANT de l'article (dernier connu) comme base, faute d'historique
+// de coût par ligne de vente. C'est cohérent avec la mise à jour du prixAchat à chaque réception.
+async function margeParProduit(req, res) {
+  const { dateDebut, dateFin } = req.query;
+
+  const lignes = await prisma.ligneVente.findMany({
+    where: { vente: { statut: 'VALIDEE', ...construirePeriode(dateDebut, dateFin) } },
+    include: { article: true },
+  });
+
+  const parArticle = {};
+  for (const l of lignes) {
+    const key = l.articleId;
+    if (!parArticle[key]) {
+      parArticle[key] = {
+        articleId: l.articleId,
+        designation: l.article.designation,
+        quantiteVendue: 0,
+        chiffreAffaires: 0,
+        coutTotal: 0,
+      };
+    }
+    const montantLigne = Number(l.prixUnitaire) * l.quantite - Number(l.remiseLigne);
+    const coutLigne = Number(l.article.prixAchat) * l.quantite;
+    parArticle[key].quantiteVendue += l.quantite;
+    parArticle[key].chiffreAffaires += montantLigne;
+    parArticle[key].coutTotal += coutLigne;
+  }
+
+  const resultats = Object.values(parArticle).map((a) => ({
+    ...a,
+    marge: a.chiffreAffaires - a.coutTotal,
+    tauxMarge: a.chiffreAffaires > 0 ? ((a.chiffreAffaires - a.coutTotal) / a.chiffreAffaires) * 100 : 0,
+  }));
+
+  resultats.sort((a, b) => b.marge - a.marge);
+
+  res.json({ periode: { dateDebut: dateDebut || null, dateFin: dateFin || null }, resultats });
+}
+
+// GET /api/etats/recap-boutique?dateDebut=&dateFin=&lieuId=
+async function recapBoutique(req, res) {
+  const { dateDebut, dateFin, lieuId } = req.query;
+
+  const where = { statut: 'VALIDEE', ...construirePeriode(dateDebut, dateFin) };
+  if (lieuId) where.lieuId = Number(lieuId);
+
+  const ventes = await prisma.vente.findMany({ where });
+  const depenses = await prisma.depense.findMany({
+    where: construirePeriodeChamp('dateDepense', dateDebut, dateFin),
+  });
+
+  const totalVentes = ventes.reduce((s, v) => s + Number(v.totalNet), 0);
+  const totalRemises = ventes.reduce((s, v) => s + Number(v.remiseMontant), 0);
+  const totalDepenses = depenses.reduce((s, d) => s + Number(d.montant), 0);
+
+  res.json({
+    periode: { dateDebut: dateDebut || null, dateFin: dateFin || null },
+    nombreVentes: ventes.length,
+    totalVentes,
+    totalRemises,
+    totalDepenses,
+    resultatNet: totalVentes - totalDepenses,
+  });
+}
+
+// GET /api/etats/marge-produits/export.csv?dateDebut=&dateFin=
+async function exporterMargeCsv(req, res) {
+  const { dateDebut, dateFin } = req.query;
+
+  const lignes = await prisma.ligneVente.findMany({
+    where: { vente: { statut: 'VALIDEE', ...construirePeriode(dateDebut, dateFin) } },
+    include: { article: true },
+  });
+
+  const parArticle = {};
+  for (const l of lignes) {
+    const key = l.articleId;
+    if (!parArticle[key]) {
+      parArticle[key] = { designation: l.article.designation, quantiteVendue: 0, chiffreAffaires: 0, coutTotal: 0 };
+    }
+    const montantLigne = Number(l.prixUnitaire) * l.quantite - Number(l.remiseLigne);
+    const coutLigne = Number(l.article.prixAchat) * l.quantite;
+    parArticle[key].quantiteVendue += l.quantite;
+    parArticle[key].chiffreAffaires += montantLigne;
+    parArticle[key].coutTotal += coutLigne;
+  }
+
+  const lignesCsv = ['Désignation;Quantité vendue;Chiffre d\'affaires;Coût total;Marge;Taux de marge (%)'];
+  for (const a of Object.values(parArticle)) {
+    const marge = a.chiffreAffaires - a.coutTotal;
+    const taux = a.chiffreAffaires > 0 ? (marge / a.chiffreAffaires) * 100 : 0;
+    lignesCsv.push(
+      `${a.designation};${a.quantiteVendue};${a.chiffreAffaires.toFixed(2)};${a.coutTotal.toFixed(2)};${marge.toFixed(2)};${taux.toFixed(1)}`
+    );
+  }
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="marge-produits.csv"');
+  res.send('\uFEFF' + lignesCsv.join('\n')); // \uFEFF = BOM pour un bon affichage des accents dans Excel
+}
+
+module.exports = { margeParProduit, recapBoutique, exporterMargeCsv };

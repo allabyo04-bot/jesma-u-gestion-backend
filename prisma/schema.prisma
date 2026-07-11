@@ -1,0 +1,460 @@
+// ============================================================
+// JESMA U - Gestion Commerciale
+// Schéma basé sur les règles de "La Pointure", adapté :
+//  - pas de gestion des pointures
+//  - fournisseur optionnel à la réception de stock
+//  - cartes cadeaux RÉUTILISABLES (code-barres fixe, dénomination fixe)
+//  - listes cadeaux (accès interne + accès public par lien)
+//  - vente par lecteur code-barre (génération/impression si absent)
+//  - stock multi-emplacement (entrepôt <-> boutique) avec transferts
+//  - fidélité : cadeau après 10 achats consécutifs >= 20 000f
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// UTILISATEURS & RÔLES
+// ------------------------------------------------------------
+
+enum RoleUtilisateur {
+  ADMIN       // Victoria
+  CAISSIER
+}
+
+model Utilisateur {
+  id            Int             @id @default(autoincrement())
+  nomUtilisateur String         @unique
+  pin           String          // haché
+  nomComplet    String
+  role          RoleUtilisateur
+  actif         Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+
+  ventes            Vente[]
+  depenses          Depense[]
+  mouvementsStock   MouvementStock[]
+  demandesRemise    DemandeRemise[] @relation("DemandeurRemise")
+  remisesApprouvees DemandeRemise[] @relation("ApprobateurRemise")
+  activationsCarte  CarteCadeauCycle[] @relation("ActivateurCycle")
+}
+
+// ------------------------------------------------------------
+// FAMILLES & SOUS-FAMILLES
+// ------------------------------------------------------------
+
+model Famille {
+  id            Int           @id @default(autoincrement())
+  nom           String        @unique
+  actif         Boolean       @default(true)
+
+  sousFamilles  SousFamille[]
+  articles      Article[]
+}
+
+model SousFamille {
+  id          Int      @id @default(autoincrement())
+  nom         String
+  familleId   Int
+  famille     Famille  @relation(fields: [familleId], references: [id])
+  actif       Boolean  @default(true)
+
+  articles    Article[]
+
+  @@unique([familleId, nom])
+}
+
+// ------------------------------------------------------------
+// ARTICLES & STOCK (sans pointures)
+// ------------------------------------------------------------
+
+model Article {
+  id              Int          @id @default(autoincrement())
+  reference       String       @unique
+  codeBarre       String?      @unique // scanné au lecteur ; peut être null si l'article n'en a pas encore
+  codeBarreGenere Boolean      @default(false) // true si le code a été généré par le système (à imprimer)
+  codeInterne     String?      @unique // secours si le lecteur ne fonctionne pas : saisie manuelle courte
+  designation     String       // toujours utilisable en recherche directe à la vente
+  familleId       Int?
+  famille         Famille?     @relation(fields: [familleId], references: [id])
+  sousFamilleId   Int?
+  sousFamille     SousFamille? @relation(fields: [sousFamilleId], references: [id])
+  prixAchat       Decimal      @default(0) // dernier prix d'achat connu, sert de base pour la marge
+  prixVente       Decimal
+  stockActuel     Int          @default(0) // total tous emplacements confondus (mis à jour via StockEmplacement)
+  seuilAlerte     Int          @default(5)
+  actif           Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  ligneVentes        LigneVente[]
+  mouvementsStock    MouvementStock[]
+  receptions         LigneReception[]
+  ligneListeCadeau   LigneListeCadeau[]
+  stocksEmplacement  StockEmplacement[]
+  lignesTransfert    LigneTransfertStock[]
+}
+
+// ------------------------------------------------------------
+// EMPLACEMENTS & STOCK MULTI-SITE (entrepôt <-> boutique)
+// ------------------------------------------------------------
+
+enum TypeLieu {
+  ENTREPOT   // lieu de stockage principal
+  BOUTIQUE   // point de vente
+}
+
+model Lieu {
+  id     Int      @id @default(autoincrement())
+  nom    String   @unique // ex: "Entrepôt principal", "Boutique Jesma U"
+  type   TypeLieu
+  actif  Boolean  @default(true)
+
+  stocks                StockEmplacement[]
+  receptions            Reception[]
+  mouvementsStock       MouvementStock[]
+  transfertsSource      TransfertStock[] @relation("LieuSource")
+  transfertsDestination TransfertStock[] @relation("LieuDestination")
+  ventes                Vente[]
+}
+
+// Quantité réelle par article et par emplacement (somme = Article.stockActuel)
+model StockEmplacement {
+  id        Int     @id @default(autoincrement())
+  articleId Int
+  article   Article @relation(fields: [articleId], references: [id])
+  lieuId    Int
+  lieu      Lieu    @relation(fields: [lieuId], references: [id])
+  quantite  Int     @default(0)
+
+  @@unique([articleId, lieuId])
+}
+
+// Réception de stock — fournisseur optionnel, arrive dans un lieu donné (en général l'entrepôt)
+model Reception {
+  id            Int       @id @default(autoincrement())
+  fournisseur   String?   // optionnel : saisi ou non selon le cas
+  reference     String?
+  lieuId        Int
+  lieu          Lieu      @relation(fields: [lieuId], references: [id])
+  dateReception DateTime  @default(now())
+  notes         String?
+  createdAt     DateTime  @default(now())
+
+  lignes        LigneReception[]
+}
+
+model LigneReception {
+  id            Int       @id @default(autoincrement())
+  receptionId   Int
+  reception     Reception @relation(fields: [receptionId], references: [id])
+  articleId     Int
+  article       Article   @relation(fields: [articleId], references: [id])
+  quantite      Int
+  prixAchat     Decimal   // met à jour Article.prixAchat pour le calcul de marge
+}
+
+// Transfert de stock entrepôt -> boutique (ou inverse si besoin)
+// Dès que Victoria valide l'envoi, les mouvements de stock (sortie source + entrée destination)
+// sont créés immédiatement — pas d'étape de "réception" séparée côté boutique.
+enum StatutTransfert {
+  VALIDE
+  ANNULE
+}
+
+model TransfertStock {
+  id                Int             @id @default(autoincrement())
+  reference         String          @unique
+  lieuSourceId      Int
+  lieuSource        Lieu            @relation("LieuSource", fields: [lieuSourceId], references: [id])
+  lieuDestinationId Int
+  lieuDestination   Lieu            @relation("LieuDestination", fields: [lieuDestinationId], references: [id])
+  statut            StatutTransfert @default(VALIDE)
+  dateTransfert     DateTime        @default(now())
+  notes             String?
+  createdAt         DateTime        @default(now())
+
+  lignes            LigneTransfertStock[]
+}
+
+model LigneTransfertStock {
+  id          Int            @id @default(autoincrement())
+  transfertId Int
+  transfert   TransfertStock @relation(fields: [transfertId], references: [id])
+  articleId   Int
+  article     Article        @relation(fields: [articleId], references: [id])
+  quantite    Int
+}
+
+enum TypeMouvementStock {
+  ENTREE_RECEPTION
+  SORTIE_VENTE
+  ANNULATION_VENTE
+  CORRECTION_INVENTAIRE
+  RETOUR_CLIENT
+  TRANSFERT_SORTIE
+  TRANSFERT_ENTREE
+}
+
+model MouvementStock {
+  id            Int                @id @default(autoincrement())
+  articleId     Int
+  article       Article            @relation(fields: [articleId], references: [id])
+  lieuId        Int
+  lieu          Lieu               @relation(fields: [lieuId], references: [id])
+  type          TypeMouvementStock
+  quantite      Int                // + ou -
+  stockAvant    Int
+  stockApres    Int
+  utilisateurId Int
+  utilisateur   Utilisateur        @relation(fields: [utilisateurId], references: [id])
+  refVenteId    Int?
+  refVente      Vente?             @relation(fields: [refVenteId], references: [id])
+  notes         String?
+  createdAt     DateTime           @default(now())
+}
+
+// ------------------------------------------------------------
+// CLIENTS
+// ------------------------------------------------------------
+
+model Client {
+  id            Int      @id @default(autoincrement())
+  nomComplet    String
+  telephone     String?  @unique
+  email         String?
+  pointsFidelite Int     @default(0)
+
+  // Fidélité : cadeau après 10 achats consécutifs >= 20 000f chacun
+  achatsConsecutifs       Int     @default(0) // reset à 0 si un achat < 20 000f casse la série
+  montantCumuleConsecutif Decimal @default(0) // cumul des 10 achats en cours, sert de base au cadeau
+
+  createdAt     DateTime @default(now())
+
+  ventes        Vente[]
+  listesCadeau  ListeCadeau[]
+  recompensesFidelite RecompenseFidelite[]
+}
+
+// Cadeau généré automatiquement quand un client atteint 10 achats consécutifs >= 20 000f
+// Le cadeau (remise, article...) est ensuite défini manuellement par Victoria, proportionnellement
+// au montant cumulé des 10 achats.
+enum TypeRecompenseFidelite {
+  A_DEFINIR
+  REMISE
+  ARTICLE
+  AUTRE
+}
+
+enum StatutRecompenseFidelite {
+  EN_ATTENTE   // atteinte mais pas encore définie
+  DEFINIE      // type/valeur choisis, pas encore remise au client
+  UTILISEE     // remise au client
+}
+
+model RecompenseFidelite {
+  id             Int                      @id @default(autoincrement())
+  clientId       Int
+  client         Client                   @relation(fields: [clientId], references: [id])
+  montantCumule  Decimal                  // cumul des 10 achats qui ont déclenché le cadeau
+  type           TypeRecompenseFidelite   @default(A_DEFINIR)
+  articleOffertId Int?
+  valeurRemise   Decimal?
+  description    String?
+  statut         StatutRecompenseFidelite @default(EN_ATTENTE)
+  dateAtteinte   DateTime                 @default(now())
+  dateUtilisation DateTime?
+}
+
+// ------------------------------------------------------------
+// VENDEURS (distincts des caissiers, comme à La Pointure)
+// ------------------------------------------------------------
+
+model Vendeur {
+  id        Int      @id @default(autoincrement())
+  nomComplet String
+  telephone String?
+  actif     Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  ventes    Vente[]
+}
+
+// ------------------------------------------------------------
+// VENTES (avec annulation + réversion de stock)
+// ------------------------------------------------------------
+
+enum StatutVente {
+  VALIDEE
+  ANNULEE
+}
+
+model Vente {
+  id             Int          @id @default(autoincrement())
+  numero         String       @unique
+  clientId       Int?
+  client         Client?      @relation(fields: [clientId], references: [id])
+  utilisateurId  Int          // le caissier qui a encaissé dans le système
+  utilisateur    Utilisateur  @relation(fields: [utilisateurId], references: [id])
+  vendeurId      Int?         // le vendeur (commission), distinct du caissier
+  vendeur        Vendeur?     @relation(fields: [vendeurId], references: [id])
+  lieuId         Int          // lieu de vente (boutique), sert au décompte/réinjection de stock
+  lieu           Lieu         @relation(fields: [lieuId], references: [id])
+  statut         StatutVente  @default(VALIDEE)
+  totalHT        Decimal
+  remiseMontant  Decimal      @default(0)
+  totalNet       Decimal
+  modePaiement   String?      // espèces, carte cadeau, mixte...
+  carteCadeauUtiliseeId Int?
+  carteCadeauUtilisee   CarteCadeau? @relation(fields: [carteCadeauUtiliseeId], references: [id])
+  dateAnnulation DateTime?
+  motifAnnulation String?
+  createdAt      DateTime     @default(now())
+
+  lignes         LigneVente[]
+  mouvementsStock MouvementStock[]
+  demandesRemise DemandeRemise[]
+}
+
+model LigneVente {
+  id          Int     @id @default(autoincrement())
+  venteId     Int
+  vente       Vente   @relation(fields: [venteId], references: [id])
+  articleId   Int
+  article     Article @relation(fields: [articleId], references: [id])
+  quantite    Int
+  prixUnitaire Decimal
+  remiseLigne Decimal @default(0)
+}
+
+// Demande de remise en temps réel avec approbation à distance (comme La Pointure)
+enum StatutDemandeRemise {
+  EN_ATTENTE
+  APPROUVEE
+  REFUSEE
+}
+
+model DemandeRemise {
+  id             Int                 @id @default(autoincrement())
+  venteId        Int
+  vente          Vente               @relation(fields: [venteId], references: [id])
+  demandeurId    Int
+  demandeur      Utilisateur         @relation("DemandeurRemise", fields: [demandeurId], references: [id])
+  montantDemande Decimal
+  motif          String?
+  statut         StatutDemandeRemise @default(EN_ATTENTE)
+  approbateurId  Int?
+  approbateur    Utilisateur?        @relation("ApprobateurRemise", fields: [approbateurId], references: [id])
+  createdAt      DateTime            @default(now())
+  resolvedAt     DateTime?
+}
+
+// ------------------------------------------------------------
+// CARTES CADEAUX RÉUTILISABLES
+// ------------------------------------------------------------
+
+// Dénominations disponibles (configurable, ex: 5000/10000/20000/50000)
+model DenominationCarteCadeau {
+  id       Int    @id @default(autoincrement())
+  montant  Decimal @unique
+  actif    Boolean @default(true)
+}
+
+enum StatutCarteCadeau {
+  INACTIVE   // carte vierge, jamais activée ou en attente de réactivation
+  ACTIVE     // vendue/activée, utilisable
+  UTILISEE   // montant consommé, en attente de réactivation
+}
+
+model CarteCadeau {
+  id            Int               @id @default(autoincrement())
+  codeBarre     String            @unique // fixe, imprimé sur la carte physique
+  denomination  Decimal           // montant fixe associé au cycle courant
+  statut        StatutCarteCadeau @default(INACTIVE)
+  createdAt     DateTime          @default(now())
+
+  cycles        CarteCadeauCycle[]
+  ventes        Vente[]
+  listesCadeauOfferts ListeCadeauCarteUtilisee[]
+}
+
+// Historique des cycles activation -> utilisation -> réactivation
+model CarteCadeauCycle {
+  id             Int          @id @default(autoincrement())
+  carteCadeauId  Int
+  carteCadeau    CarteCadeau  @relation(fields: [carteCadeauId], references: [id])
+  denomination   Decimal
+  dateActivation DateTime     @default(now())
+  dateUtilisation DateTime?
+  utilisateurId  Int
+  utilisateur    Utilisateur  @relation("ActivateurCycle", fields: [utilisateurId], references: [id])
+}
+
+// ------------------------------------------------------------
+// LISTES CADEAUX
+// ------------------------------------------------------------
+
+model ListeCadeau {
+  id            Int      @id @default(autoincrement())
+  clientId      Int
+  client        Client   @relation(fields: [clientId], references: [id])
+  titre         String?  // ex: "Liste de naissance de Fatou"
+  codeAcces     String   @unique // pour le lien public /liste-cadeau/:codeAcces
+  actif         Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  lignes        LigneListeCadeau[]
+  cartesUtilisees ListeCadeauCarteUtilisee[]
+}
+
+model LigneListeCadeau {
+  id            Int         @id @default(autoincrement())
+  listeCadeauId Int
+  listeCadeau   ListeCadeau @relation(fields: [listeCadeauId], references: [id])
+  articleId     Int
+  article       Article     @relation(fields: [articleId], references: [id])
+  quantiteSouhaitee Int
+  quantiteOfferte   Int     @default(0)
+}
+
+// Traçabilité : quelle carte cadeau a servi à offrir sur quelle liste, et par qui
+// (saisi soit via le lien public, soit par la vendeuse au téléphone)
+model ListeCadeauCarteUtilisee {
+  id            Int         @id @default(autoincrement())
+  listeCadeauId Int
+  listeCadeau   ListeCadeau @relation(fields: [listeCadeauId], references: [id])
+  carteCadeauId Int
+  carteCadeau   CarteCadeau @relation(fields: [carteCadeauId], references: [id])
+  offrePar      String?     // nom donné par la personne qui offre (facultatif)
+  canal         String      // "web" ou "telephone"
+  montantUtilise Decimal
+  createdAt     DateTime    @default(now())
+}
+
+// ------------------------------------------------------------
+// DÉPENSES / BUDGET (13 catégories, visibilité par rôle)
+// ------------------------------------------------------------
+
+model CategorieDepense {
+  id       Int    @id @default(autoincrement())
+  nom      String @unique
+  depenses Depense[]
+}
+
+model Depense {
+  id             Int              @id @default(autoincrement())
+  categorieId    Int
+  categorie      CategorieDepense @relation(fields: [categorieId], references: [id])
+  montant        Decimal
+  description    String?
+  utilisateurId  Int
+  utilisateur    Utilisateur      @relation(fields: [utilisateurId], references: [id])
+  dateDepense    DateTime         @default(now())
+  createdAt      DateTime         @default(now())
+}
