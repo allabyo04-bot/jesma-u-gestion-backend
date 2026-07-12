@@ -77,17 +77,18 @@ model SousFamille {
 model Article {
   id              Int          @id @default(autoincrement())
   reference       String       @unique
-  codeBarre       String?      @unique // scanné au lecteur ; peut être null si l'article n'en a pas encore
-  codeBarreGenere Boolean      @default(false) // true si le code a été généré par le système (à imprimer)
-  codeInterne     String?      @unique // secours si le lecteur ne fonctionne pas : saisie manuelle courte
-  designation     String       // toujours utilisable en recherche directe à la vente
+  codeBarre       String?      @unique
+  codeBarreGenere Boolean      @default(false)
+  codeInterne     String?      @unique
+  designation     String
+  photoUrl        String?  
   familleId       Int?
   famille         Famille?     @relation(fields: [familleId], references: [id])
   sousFamilleId   Int?
   sousFamille     SousFamille? @relation(fields: [sousFamilleId], references: [id])
-  prixAchat       Decimal      @default(0) // dernier prix d'achat connu, sert de base pour la marge
+  prixAchat       Decimal      @default(0)
   prixVente       Decimal
-  stockActuel     Int          @default(0) // total tous emplacements confondus (mis à jour via StockEmplacement)
+  stockActuel     Int          @default(0)
   seuilAlerte     Int          @default(5)
   actif           Boolean      @default(true)
   createdAt       DateTime     @default(now())
