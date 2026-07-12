@@ -43,17 +43,29 @@ async function mettreAJourFidelite(tx, clientId, totalNet) {
 }
 
 // POST /api/ventes
-// body: { clientId?, vendeurId?, lieuId, modePaiement, remiseMontant?, motifRemise?,
-//         carteCadeauCode?, lignes: [{ articleId, quantite, prixUnitaire, remiseLigne? }] }
+// body: { clientId?, vendeurId?, lieuId, remiseMontant?, motifRemise?,
+//         carteCadeauCode?, lignes: [{ articleId, quantite, prixUnitaire, remiseLigne? }],
+//         paiements: [{ mode, montant }, ...] }
+// "paiements" remplace l'ancien "modePaiement" unique : une vente peut être réglée par
+// plusieurs modes à la fois (ex: moitié espèces + moitié Wave). La somme des montants
+// doit correspondre exactement au total net de la vente.
 async function creerVente(req, res) {
   const {
-    clientId, vendeurId, lieuId, modePaiement, remiseMontant, motifRemise,
-    carteCadeauCode, lignes,
+    clientId, vendeurId, lieuId, remiseMontant, motifRemise,
+    carteCadeauCode, lignes, paiements,
   } = req.body;
   const utilisateurId = req.user.id;
 
   if (!lieuId || !Array.isArray(lignes) || lignes.length === 0) {
     return res.status(400).json({ error: 'Lieu de vente et au moins une ligne sont requis.' });
+  }
+  if (!Array.isArray(paiements) || paiements.length === 0) {
+    return res.status(400).json({ error: 'Au moins un mode de paiement est requis.' });
+  }
+  for (const p of paiements) {
+    if (!p.mode || !(Number(p.montant) > 0)) {
+      return res.status(400).json({ error: 'Chaque paiement doit avoir un mode et un montant positif.' });
+    }
   }
 
   try {
@@ -65,6 +77,14 @@ async function creerVente(req, res) {
       const remise = Number(remiseMontant || 0);
       let totalNet = totalHT - remise;
 
+      const totalPaiements = paiements.reduce((s, p) => s + Number(p.montant), 0);
+      // Tolérance d'arrondi de 1 franc pour éviter les faux positifs liés aux décimales.
+      if (Math.abs(totalPaiements - totalNet) > 1) {
+        throw new Error(
+          `Le total des paiements (${totalPaiements}) ne correspond pas au total de la vente (${totalNet}).`
+        );
+      }
+
       // Carte cadeau utilisée en paiement (total ou partiel selon sa dénomination)
       let carteCadeau = null;
       if (carteCadeauCode) {
@@ -72,6 +92,10 @@ async function creerVente(req, res) {
         if (!carteCadeau) throw new Error('Carte cadeau introuvable.');
         if (carteCadeau.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
       }
+
+      // Le champ modePaiement (unique) est conservé pour compat/affichage rapide : on y met
+      // la liste des modes utilisés, séparés par virgule (ex: "Espèces, Wave").
+      const modePaiementResume = paiements.map((p) => p.mode).join(', ');
 
       const vente = await tx.vente.create({
         data: {
@@ -83,7 +107,7 @@ async function creerVente(req, res) {
           totalHT,
           remiseMontant: remise,
           totalNet,
-          modePaiement: modePaiement || null,
+          modePaiement: modePaiementResume,
           carteCadeauUtiliseeId: carteCadeau ? carteCadeau.id : null,
           lignes: {
             create: lignes.map((l) => ({
@@ -93,8 +117,14 @@ async function creerVente(req, res) {
               remiseLigne: l.remiseLigne || 0,
             })),
           },
+          paiements: {
+            create: paiements.map((p) => ({
+              mode: p.mode,
+              montant: Number(p.montant),
+            })),
+          },
         },
-        include: { lignes: true },
+        include: { lignes: true, paiements: true },
       });
 
       // Décompte du stock au lieu de vente
@@ -218,7 +248,13 @@ async function listerVentes(req, res) {
 
   const ventes = await prisma.vente.findMany({
     where,
-    include: { lignes: { include: { article: true } }, client: true, vendeur: true, utilisateur: true },
+    include: {
+      lignes: { include: { article: true } },
+      paiements: true,
+      client: true,
+      vendeur: true,
+      utilisateur: true,
+    },
     orderBy: { createdAt: 'desc' },
   });
   res.json(ventes);

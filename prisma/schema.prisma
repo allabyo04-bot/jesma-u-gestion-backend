@@ -81,7 +81,7 @@ model Article {
   codeBarreGenere Boolean      @default(false)
   codeInterne     String?      @unique
   designation     String
-  photoUrl        String?  
+  photoUrl        String?
   familleId       Int?
   famille         Famille?     @relation(fields: [familleId], references: [id])
   sousFamilleId   Int?
@@ -321,6 +321,7 @@ model Vente {
   lignes         LigneVente[]
   mouvementsStock MouvementStock[]
   demandesRemise DemandeRemise[]
+  paiements      PaiementVente[]
 }
 
 model LigneVente {
@@ -458,4 +459,17 @@ model Depense {
   utilisateur    Utilisateur      @relation(fields: [utilisateurId], references: [id])
   dateDepense    DateTime         @default(now())
   createdAt      DateTime         @default(now())
+}
+
+// ------------------------------------------------------------
+// PAIEMENTS DE VENTE (paiement mixte : plusieurs modes possibles)
+// ------------------------------------------------------------
+
+model PaiementVente {
+  id        Int      @id @default(autoincrement())
+  venteId   Int
+  vente     Vente    @relation(fields: [venteId], references: [id])
+  mode      String
+  montant   Decimal
+  createdAt DateTime @default(now())
 }
