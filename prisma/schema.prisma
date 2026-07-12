@@ -411,6 +411,19 @@ model ListeCadeau {
   actif         Boolean  @default(true)
   createdAt     DateTime @default(now())
 
+  // Coordonnées du destinataire (celui/celle qui attend le cadeau) — saisies à la création,
+  // imprimées automatiquement sur le document A4, jamais à remplir à la main.
+  nomDestinataire        String?
+  telephoneDestinataire1 String?
+  telephoneDestinataire2 String?
+  emailDestinataire      String?
+
+  // Coordonnées de la personne qui offre/organise la liste (optionnel — utile quand ce n'est
+  // pas le destinataire lui-même qui crée la liste, ex: une marraine).
+  nomDonateur       String?
+  telephoneDonateur String?
+  emailDonateur     String?
+
   lignes        LigneListeCadeau[]
   cartesUtilisees ListeCadeauCarteUtilisee[]
 }

@@ -6,9 +6,17 @@ function genererCodeAcces() {
 }
 
 // POST /api/listes-cadeaux   (interne, en boutique)
-// body: { clientId, titre?, lignes: [{ articleId, quantiteSouhaitee }] }
+// body: { clientId, titre?, lignes: [{ articleId, quantiteSouhaitee }],
+//         nomDestinataire?, telephoneDestinataire1?, telephoneDestinataire2?, emailDestinataire?,
+//         nomDonateur?, telephoneDonateur?, emailDonateur? }
+// Les coordonnées destinataire/donateur sont saisies ici pour être imprimées automatiquement
+// sur le document A4 (jamais à remplir à la main).
 async function creerListeCadeau(req, res) {
-  const { clientId, titre, lignes } = req.body;
+  const {
+    clientId, titre, lignes,
+    nomDestinataire, telephoneDestinataire1, telephoneDestinataire2, emailDestinataire,
+    nomDonateur, telephoneDonateur, emailDonateur,
+  } = req.body;
   if (!clientId || !Array.isArray(lignes) || lignes.length === 0) {
     return res.status(400).json({ error: 'Client et au moins un article sont requis.' });
   }
@@ -18,6 +26,13 @@ async function creerListeCadeau(req, res) {
       clientId: Number(clientId),
       titre: titre || null,
       codeAcces: genererCodeAcces(),
+      nomDestinataire: nomDestinataire || null,
+      telephoneDestinataire1: telephoneDestinataire1 || null,
+      telephoneDestinataire2: telephoneDestinataire2 || null,
+      emailDestinataire: emailDestinataire || null,
+      nomDonateur: nomDonateur || null,
+      telephoneDonateur: telephoneDonateur || null,
+      emailDonateur: emailDonateur || null,
       lignes: {
         create: lignes.map((l) => ({
           articleId: Number(l.articleId),
@@ -49,7 +64,7 @@ async function consulterListePublique(req, res) {
   });
   if (!liste || !liste.actif) return res.status(404).json({ error: 'Liste cadeau introuvable.' });
 
-  // On ne renvoie que le nécessaire publiquement (pas le téléphone du client par ex.)
+  // On ne renvoie que le nécessaire publiquement (pas les coordonnées privées du destinataire)
   res.json({
     titre: liste.titre,
     client: { nomComplet: liste.client.nomComplet },
