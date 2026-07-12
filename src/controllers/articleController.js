@@ -1,3 +1,4 @@
+const cloudinary = require('../../config/cloudinary');
 const prisma = require('../lib/prisma');
 const { genererCodeBarreInterne } = require('../utils/barcode');
 const { genererSvgEAN13 } = require('../utils/ean13');
@@ -145,6 +146,36 @@ async function imprimerEtiquettes(req, res) {
   res.send(html);
 }
 
+// POST /api/articles/:id/photo (multipart/form-data, champ "photo")
+async function uploaderPhoto(req, res) {
+  const id = Number(req.params.id);
+  const article = await prisma.article.findUnique({ where: { id } });
+  if (!article) return res.status(404).json({ error: 'Article introuvable.' });
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'Aucune image reçue.' });
+  }
+
+  try {
+    const resultat = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: 'jesma-u/articles', resource_type: 'image' },
+        (error, result) => (error ? reject(error) : resolve(result)),
+      );
+      stream.end(req.file.buffer);
+    });
+
+    const misAJour = await prisma.article.update({
+      where: { id },
+      data: { photoUrl: resultat.secure_url },
+    });
+
+    res.json(misAJour);
+  } catch (err) {
+    res.status(500).json({ error: "Échec de l'upload de la photo." });
+  }
+}
+
 module.exports = {
   listerArticles,
   rechercherArticle,
@@ -152,4 +183,5 @@ module.exports = {
   genererCodeBarre,
   listerCodesAImprimer,
   imprimerEtiquettes,
+  uploaderPhoto,
 };
