@@ -2,7 +2,6 @@ require('dotenv').config();
 require('express-async-errors'); // capture les erreurs async non gérées dans les contrôleurs
 const express = require('express');
 const cors = require('cors');
-
 const authRoutes = require('./routes/authRoutes');
 const familleRoutes = require('./routes/familleRoutes');
 const articleRoutes = require('./routes/articleRoutes');
@@ -15,9 +14,9 @@ const depenseRoutes = require('./routes/depenseRoutes');
 const etatRoutes = require('./routes/etatRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const clientRoutes = require('./routes/clientRoutes');
+const vendeurRoutes = require('./routes/vendeurRoutes');
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
@@ -35,6 +34,7 @@ app.use('/api/depenses', depenseRoutes);
 app.use('/api/etats', etatRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/clients', clientRoutes);
+app.use('/api/vendeurs', vendeurRoutes);
 
 // Gestionnaire d'erreurs générique
 app.use((err, req, res, next) => {
