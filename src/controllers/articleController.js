@@ -20,19 +20,34 @@ async function listerArticles(req, res) {
   res.json(articles);
 }
 
-// GET /api/articles/recherche?q=...
+// GET /api/articles/recherche?q=...&lieuId=...
 // Recherche unique utilisée à la vente : essaie codeBarre exact, puis codeInterne exact,
 // puis désignation (contient), pour couvrir scan, saisie manuelle de secours et nom direct.
+// Si lieuId est fourni, chaque résultat inclut aussi "stockLieu" : le stock réel disponible
+// à cet emplacement précis (distinct de stockActuel, qui est le total tous emplacements
+// confondus et ne doit jamais servir à décider si on peut vendre depuis une boutique donnée).
 async function rechercherArticle(req, res) {
   const q = (req.query.q || '').trim();
+  const lieuId = req.query.lieuId ? Number(req.query.lieuId) : null;
   if (!q) return res.status(400).json({ error: 'Paramètre de recherche "q" requis.' });
+
+  async function ajouterStockLieu(articles) {
+    if (!lieuId) return articles;
+    const ids = articles.map((a) => a.id);
+    const stocks = await prisma.stockEmplacement.findMany({
+      where: { lieuId, articleId: { in: ids } },
+    });
+    const parArticle = Object.fromEntries(stocks.map((s) => [s.articleId, s.quantite]));
+    return articles.map((a) => ({ ...a, stockLieu: parArticle[a.id] ?? 0 }));
+  }
 
   let article = await prisma.article.findFirst({ where: { codeBarre: q, actif: true } });
   if (!article) {
     article = await prisma.article.findFirst({ where: { codeInterne: q, actif: true } });
   }
   if (article) {
-    return res.json({ mode: 'exact', resultats: [article] });
+    const [resultat] = await ajouterStockLieu([article]);
+    return res.json({ mode: 'exact', resultats: [resultat] });
   }
 
   const resultats = await prisma.article.findMany({
@@ -40,7 +55,8 @@ async function rechercherArticle(req, res) {
     take: 20,
     orderBy: { designation: 'asc' },
   });
-  res.json({ mode: 'recherche', resultats });
+  const resultatsAvecStock = await ajouterStockLieu(resultats);
+  res.json({ mode: 'recherche', resultats: resultatsAvecStock });
 }
 
 // POST /api/articles
