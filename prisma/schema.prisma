@@ -437,6 +437,8 @@ model LigneListeCadeau {
   article       Article     @relation(fields: [articleId], references: [id])
   quantiteSouhaitee Int
   quantiteOfferte   Int     @default(0)
+
+  detailsOffres DetailOffreListeCadeau[]
 }
 
 // Traçabilité de chaque "offre" faite sur une liste cadeau — soit via une carte cadeau
@@ -466,6 +468,19 @@ model ListeCadeauCarteUtilisee {
   validateur     Utilisateur?             @relation("ValidateurOffre", fields: [validateurId], references: [id])
   dateValidation DateTime?
   createdAt      DateTime                 @default(now())
+
+  lignesCouvertes DetailOffreListeCadeau[]
+}
+
+// Détail des articles/quantités couverts par une offre précise — nécessaire pour pouvoir
+// libérer exactement les bonnes quantités réservées si l'offre est rejetée (paiement jamais reçu).
+model DetailOffreListeCadeau {
+  id                  Int                      @id @default(autoincrement())
+  offreId             Int
+  offre               ListeCadeauCarteUtilisee @relation(fields: [offreId], references: [id])
+  ligneListeCadeauId  Int
+  ligneListeCadeau    LigneListeCadeau         @relation(fields: [ligneListeCadeauId], references: [id])
+  quantite            Int
 }
 
 // ------------------------------------------------------------
