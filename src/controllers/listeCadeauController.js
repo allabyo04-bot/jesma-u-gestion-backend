@@ -93,9 +93,18 @@ async function offrirSurListe({ codeAcces, carteCadeauCode, modePaiement, montan
   return prisma.$transaction(async (tx) => {
     const liste = await tx.listeCadeau.findUnique({
       where: { codeAcces },
-      include: { lignes: true },
+      include: { lignes: { include: { article: true } } },
     });
     if (!liste || !liste.actif) throw new Error('Liste cadeau introuvable.');
+
+    // Valeur réelle des articles/quantités choisis — sert à valider le montant déclaré pour
+    // les paiements hors carte cadeau (la carte, elle, a une valeur fixe indépendante).
+    let valeurLignesChoisies = 0;
+    for (const choix of lignesChoisies) {
+      const ligne = liste.lignes.find((l) => l.id === Number(choix.ligneId));
+      if (!ligne) throw new Error(`Ligne ${choix.ligneId} absente de cette liste.`);
+      valeurLignesChoisies += Number(ligne.article.prixVente) * Number(choix.quantite);
+    }
 
     let carte = null;
     let statutConfirmation = 'CONFIRME';
@@ -106,11 +115,22 @@ async function offrirSurListe({ codeAcces, carteCadeauCode, modePaiement, montan
       if (!carte) throw new Error('Carte cadeau introuvable.');
       if (carte.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
       montantUtilise = carte.denomination;
-    } else if (modePaiement && Number(montant) > 0) {
-      montantUtilise = Number(montant);
+    } else if (modePaiement) {
+      if (montant === undefined || montant === null || Number.isNaN(Number(montant))) {
+        throw new Error('Montant invalide.');
+      }
+      // Tolérance d'arrondi de 1 franc ; au-delà, le montant déclaré doit correspondre
+      // exactement à la valeur des articles sélectionnés — évite qu'on déclare un montant
+      // arbitraire sans rapport avec ce qui est réellement offert.
+      if (Math.abs(Number(montant) - valeurLignesChoisies) > 1) {
+        throw new Error(
+          `Le montant (${montant}) ne correspond pas à la valeur des articles sélectionnés (${valeurLignesChoisies}).`
+        );
+      }
+      montantUtilise = valeurLignesChoisies;
       statutConfirmation = canal === 'web' ? 'EN_ATTENTE_VERIFICATION' : 'CONFIRME';
     } else {
-      throw new Error('Indiquez une carte cadeau, ou un mode de paiement avec un montant.');
+      throw new Error('Indiquez une carte cadeau, ou un mode de paiement.');
     }
 
     for (const choix of lignesChoisies) {
