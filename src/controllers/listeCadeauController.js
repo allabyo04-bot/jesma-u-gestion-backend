@@ -9,8 +9,6 @@ function genererCodeAcces() {
 // body: { clientId, titre?, lignes: [{ articleId, quantiteSouhaitee }],
 //         nomDestinataire?, telephoneDestinataire1?, telephoneDestinataire2?, emailDestinataire?,
 //         nomDonateur?, telephoneDonateur?, emailDonateur? }
-// Les coordonnées destinataire/donateur sont saisies ici pour être imprimées automatiquement
-// sur le document A4 (jamais à remplir à la main).
 async function creerListeCadeau(req, res) {
   const {
     clientId, titre, lignes,
@@ -78,11 +76,20 @@ async function consulterListePublique(req, res) {
   });
 }
 
-// Logique commune : offrir des articles d'une liste en payant avec une carte cadeau.
-// NOTE : ceci valide et consomme la carte cadeau, et marque les quantités comme "offertes"
-// sur la liste. Le décompte de stock réel se fait lors de la préparation/remise du cadeau
-// en boutique, via une vente classique (POST /api/ventes) rattachée à ce client.
-async function offrirSurListe({ codeAcces, carteCadeauCode, offrePar, canal, lignesChoisies }) {
+// Logique commune : offrir des articles d'une liste, payé soit par carte cadeau,
+// soit par un autre mode de paiement déclaré (Espèces, Wave, Mobile Money...).
+//
+// Règles de confirmation :
+//  - Carte cadeau (n'importe quel canal) -> vérifiée immédiatement en base -> CONFIRME direct
+//  - Autre mode, canal "telephone" (la vendeuse a physiquement vérifié la réception avant
+//    de saisir) -> CONFIRME direct
+//  - Autre mode, canal "web" (déclaré à distance par un proche, aucune vérification possible
+//    au moment de la saisie) -> EN_ATTENTE_VERIFICATION, à confirmer ensuite par Victoria
+//
+// Dans tous les cas, la quantité est réservée (quantiteOfferte incrémentée) immédiatement,
+// pour éviter qu'un autre proche choisisse le même article entre-temps — même si la
+// confirmation du paiement web est encore en attente.
+async function offrirSurListe({ codeAcces, carteCadeauCode, modePaiement, montant, offrePar, canal, lignesChoisies }) {
   return prisma.$transaction(async (tx) => {
     const liste = await tx.listeCadeau.findUnique({
       where: { codeAcces },
@@ -90,9 +97,21 @@ async function offrirSurListe({ codeAcces, carteCadeauCode, offrePar, canal, lig
     });
     if (!liste || !liste.actif) throw new Error('Liste cadeau introuvable.');
 
-    const carte = await tx.carteCadeau.findUnique({ where: { codeBarre: carteCadeauCode } });
-    if (!carte) throw new Error('Carte cadeau introuvable.');
-    if (carte.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
+    let carte = null;
+    let statutConfirmation = 'CONFIRME';
+    let montantUtilise;
+
+    if (carteCadeauCode) {
+      carte = await tx.carteCadeau.findUnique({ where: { codeBarre: carteCadeauCode } });
+      if (!carte) throw new Error('Carte cadeau introuvable.');
+      if (carte.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
+      montantUtilise = carte.denomination;
+    } else if (modePaiement && Number(montant) > 0) {
+      montantUtilise = Number(montant);
+      statutConfirmation = canal === 'web' ? 'EN_ATTENTE_VERIFICATION' : 'CONFIRME';
+    } else {
+      throw new Error('Indiquez une carte cadeau, ou un mode de paiement avec un montant.');
+    }
 
     for (const choix of lignesChoisies) {
       const ligne = liste.lignes.find((l) => l.id === Number(choix.ligneId));
@@ -107,37 +126,56 @@ async function offrirSurListe({ codeAcces, carteCadeauCode, offrePar, canal, lig
       });
     }
 
-    await tx.carteCadeau.update({ where: { id: carte.id }, data: { statut: 'UTILISEE' } });
-    const cycleOuvert = await tx.carteCadeauCycle.findFirst({
-      where: { carteCadeauId: carte.id, dateUtilisation: null },
-      orderBy: { dateActivation: 'desc' },
-    });
-    if (cycleOuvert) {
-      await tx.carteCadeauCycle.update({ where: { id: cycleOuvert.id }, data: { dateUtilisation: new Date() } });
+    if (carte) {
+      await tx.carteCadeau.update({ where: { id: carte.id }, data: { statut: 'UTILISEE' } });
+      const cycleOuvert = await tx.carteCadeauCycle.findFirst({
+        where: { carteCadeauId: carte.id, dateUtilisation: null },
+        orderBy: { dateActivation: 'desc' },
+      });
+      if (cycleOuvert) {
+        await tx.carteCadeauCycle.update({ where: { id: cycleOuvert.id }, data: { dateUtilisation: new Date() } });
+      }
     }
 
-    return tx.listeCadeauCarteUtilisee.create({
+    const offre = await tx.listeCadeauCarteUtilisee.create({
       data: {
         listeCadeauId: liste.id,
-        carteCadeauId: carte.id,
+        carteCadeauId: carte ? carte.id : null,
+        modePaiement: carte ? null : modePaiement,
         offrePar: offrePar || null,
         canal,
-        montantUtilise: carte.denomination,
+        montantUtilise,
+        statutConfirmation,
+        lignesCouvertes: {
+          create: lignesChoisies.map((choix) => ({
+            ligneListeCadeauId: Number(choix.ligneId),
+            quantite: Number(choix.quantite),
+          })),
+        },
       },
+      include: { lignesCouvertes: true },
     });
+
+    return offre;
   }, { maxWait: 10000, timeout: 20000 });
 }
 
 // POST /api/listes-cadeaux/publique/:codeAcces/offrir  (PUBLIC)
-// body: { carteCadeauCode, offrePar?, lignes: [{ ligneId, quantite }] }
+// body: { carteCadeauCode? , modePaiement?, montant?, offrePar?, lignes: [{ ligneId, quantite }] }
+// Soit carteCadeauCode est fourni (validation immédiate), soit modePaiement + montant
+// (déclaratif, à vérifier par Victoria avant confirmation définitive).
 async function offrirDepuisWeb(req, res) {
-  const { carteCadeauCode, offrePar, lignes } = req.body;
-  if (!carteCadeauCode || !Array.isArray(lignes) || lignes.length === 0) {
-    return res.status(400).json({ error: 'Carte cadeau et au moins un article choisi sont requis.' });
+  const { carteCadeauCode, modePaiement, montant, offrePar, lignes } = req.body;
+  if (!Array.isArray(lignes) || lignes.length === 0) {
+    return res.status(400).json({ error: 'Au moins un article choisi est requis.' });
+  }
+  if (!carteCadeauCode && !modePaiement) {
+    return res.status(400).json({ error: 'Indiquez une carte cadeau ou un mode de paiement.' });
   }
   try {
     const resultat = await offrirSurListe({
-      codeAcces: req.params.codeAcces, carteCadeauCode, offrePar, canal: 'web', lignesChoisies: lignes,
+      codeAcces: req.params.codeAcces, carteCadeauCode, modePaiement, montant,
+      offrePar, canal: 'web', lignesChoisies: lignes,
     });
     res.status(201).json(resultat);
   } catch (err) {
@@ -146,14 +184,19 @@ async function offrirDepuisWeb(req, res) {
 }
 
 // POST /api/listes-cadeaux/:codeAcces/offrir-telephone  (interne, saisi par la vendeuse)
+// La vendeuse a déjà vérifié la réception du paiement avant de saisir -> confirmé direct.
 async function offrirParTelephone(req, res) {
-  const { carteCadeauCode, offrePar, lignes } = req.body;
-  if (!carteCadeauCode || !Array.isArray(lignes) || lignes.length === 0) {
-    return res.status(400).json({ error: 'Carte cadeau et au moins un article choisi sont requis.' });
+  const { carteCadeauCode, modePaiement, montant, offrePar, lignes } = req.body;
+  if (!Array.isArray(lignes) || lignes.length === 0) {
+    return res.status(400).json({ error: 'Au moins un article choisi est requis.' });
+  }
+  if (!carteCadeauCode && !modePaiement) {
+    return res.status(400).json({ error: 'Indiquez une carte cadeau ou un mode de paiement.' });
   }
   try {
     const resultat = await offrirSurListe({
-      codeAcces: req.params.codeAcces, carteCadeauCode, offrePar, canal: 'telephone', lignesChoisies: lignes,
+      codeAcces: req.params.codeAcces, carteCadeauCode, modePaiement, montant,
+      offrePar, canal: 'telephone', lignesChoisies: lignes,
     });
     res.status(201).json(resultat);
   } catch (err) {
@@ -161,6 +204,84 @@ async function offrirParTelephone(req, res) {
   }
 }
 
+// GET /api/listes-cadeaux/offres-en-attente  (interne, ADMIN)
+// Toutes les offres déclarées à distance (canal web, mode de paiement non-carte) dont le
+// paiement n'a pas encore été vérifié par Victoria.
+async function listerOffresEnAttente(req, res) {
+  const offres = await prisma.listeCadeauCarteUtilisee.findMany({
+    where: { statutConfirmation: 'EN_ATTENTE_VERIFICATION' },
+    include: {
+      listeCadeau: { include: { client: true } },
+      lignesCouvertes: { include: { ligneListeCadeau: { include: { article: true } } } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+  res.json(offres);
+}
+
+// POST /api/listes-cadeaux/offres/:id/confirmer  (interne, ADMIN)
+// Victoria confirme avoir bien reçu le paiement déclaré.
+async function confirmerOffre(req, res) {
+  const id = Number(req.params.id);
+  const utilisateurId = req.user.id;
+
+  const offre = await prisma.listeCadeauCarteUtilisee.findUnique({ where: { id } });
+  if (!offre) return res.status(404).json({ error: 'Offre introuvable.' });
+  if (offre.statutConfirmation !== 'EN_ATTENTE_VERIFICATION') {
+    return res.status(400).json({ error: 'Cette offre a déjà été traitée.' });
+  }
+
+  const misAJour = await prisma.listeCadeauCarteUtilisee.update({
+    where: { id },
+    data: { statutConfirmation: 'CONFIRME', validateurId: utilisateurId, dateValidation: new Date() },
+  });
+  res.json(misAJour);
+}
+
+// POST /api/listes-cadeaux/offres/:id/rejeter  (interne, ADMIN)
+// Le paiement déclaré n'a en fait jamais été reçu : on rejette et on libère précisément les
+// quantités réservées par cette offre, pour qu'un autre proche puisse offrir ces articles.
+async function rejeterOffre(req, res) {
+  const id = Number(req.params.id);
+  const utilisateurId = req.user.id;
+  const { motif } = req.body;
+
+  try {
+    const resultat = await prisma.$transaction(async (tx) => {
+      const offre = await tx.listeCadeauCarteUtilisee.findUnique({
+        where: { id },
+        include: { lignesCouvertes: true },
+      });
+      if (!offre) throw new Error('Offre introuvable.');
+      if (offre.statutConfirmation !== 'EN_ATTENTE_VERIFICATION') {
+        throw new Error('Cette offre a déjà été traitée.');
+      }
+
+      for (const detail of offre.lignesCouvertes) {
+        await tx.ligneListeCadeau.update({
+          where: { id: detail.ligneListeCadeauId },
+          data: { quantiteOfferte: { decrement: detail.quantite } },
+        });
+      }
+
+      return tx.listeCadeauCarteUtilisee.update({
+        where: { id },
+        data: {
+          statutConfirmation: 'REJETE',
+          validateurId: utilisateurId,
+          dateValidation: new Date(),
+          offrePar: offre.offrePar ? `${offre.offrePar} (rejeté${motif ? ' - ' + motif : ''})` : null,
+        },
+      });
+    }, { maxWait: 10000, timeout: 20000 });
+
+    res.json(resultat);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 module.exports = {
   creerListeCadeau, listerListesCadeaux, consulterListePublique, offrirDepuisWeb, offrirParTelephone,
+  listerOffresEnAttente, confirmerOffre, rejeterOffre,
 };

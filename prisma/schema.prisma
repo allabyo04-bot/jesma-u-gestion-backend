@@ -43,6 +43,7 @@ model Utilisateur {
   demandesRemise    DemandeRemise[] @relation("DemandeurRemise")
   remisesApprouvees DemandeRemise[] @relation("ApprobateurRemise")
   activationsCarte  CarteCadeauCycle[] @relation("ActivateurCycle")
+  offresValidees    ListeCadeauCarteUtilisee[] @relation("ValidateurOffre")
 }
 
 // ------------------------------------------------------------
@@ -438,18 +439,33 @@ model LigneListeCadeau {
   quantiteOfferte   Int     @default(0)
 }
 
-// Traçabilité : quelle carte cadeau a servi à offrir sur quelle liste, et par qui
-// (saisi soit via le lien public, soit par la vendeuse au téléphone)
+// Traçabilité de chaque "offre" faite sur une liste cadeau — soit via une carte cadeau
+// (paiement immédiat, auto-confirmé), soit via un autre mode de paiement déclaré par le
+// donateur (Espèces remises en main propre, Mobile Money, Wave, etc.) :
+//  - canal "telephone" (saisi par la vendeuse, qui a déjà vérifié la réception) -> CONFIRME direct
+//  - canal "web" sans carte cadeau (déclaré à distance par un proche) -> EN_ATTENTE_VERIFICATION,
+//    à confirmer manuellement par Victoria une fois le paiement effectivement reçu/vérifié
+enum StatutConfirmationOffre {
+  CONFIRME
+  EN_ATTENTE_VERIFICATION
+  REJETE
+}
+
 model ListeCadeauCarteUtilisee {
-  id            Int         @id @default(autoincrement())
-  listeCadeauId Int
-  listeCadeau   ListeCadeau @relation(fields: [listeCadeauId], references: [id])
-  carteCadeauId Int
-  carteCadeau   CarteCadeau @relation(fields: [carteCadeauId], references: [id])
-  offrePar      String?     // nom donné par la personne qui offre (facultatif)
-  canal         String      // "web" ou "telephone"
+  id             Int                      @id @default(autoincrement())
+  listeCadeauId  Int
+  listeCadeau    ListeCadeau              @relation(fields: [listeCadeauId], references: [id])
+  carteCadeauId  Int?                     // optionnel désormais : null si payé par un autre mode
+  carteCadeau    CarteCadeau?             @relation(fields: [carteCadeauId], references: [id])
+  modePaiement   String?                  // ex: "Espèces", "Wave"... rempli seulement si pas de carte
+  offrePar       String?                  // nom donné par la personne qui offre (facultatif)
+  canal          String                   // "web" ou "telephone"
   montantUtilise Decimal
-  createdAt     DateTime    @default(now())
+  statutConfirmation StatutConfirmationOffre @default(CONFIRME)
+  validateurId   Int?                     // qui a confirmé/rejeté une offre en attente (Victoria)
+  validateur     Utilisateur?             @relation("ValidateurOffre", fields: [validateurId], references: [id])
+  dateValidation DateTime?
+  createdAt      DateTime                 @default(now())
 }
 
 // ------------------------------------------------------------
