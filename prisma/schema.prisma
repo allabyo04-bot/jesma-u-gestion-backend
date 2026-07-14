@@ -1,15 +1,5 @@
 // ============================================================
 // JESMA U - Gestion Commerciale
-// Schéma basé sur les règles de "La Pointure", adapté :
-//  - pas de gestion des pointures
-//  - fournisseur optionnel à la réception de stock
-//  - cartes cadeaux RÉUTILISABLES (code-barres fixe, dénomination fixe)
-//  - listes cadeaux (accès interne + accès public par lien)
-//  - vente par lecteur code-barre (génération/impression si absent)
-//  - stock multi-emplacement (entrepôt <-> boutique) avec transferts
-//  - fidélité : cadeau après 10 achats consécutifs >= 20 000f
-//  - vente à crédit (sans date d'échéance, suivi du montant restant)
-//  - retours/échanges (échange obligatoire, jamais de remboursement espèces)
 // ============================================================
 
 generator client {
@@ -26,14 +16,14 @@ datasource db {
 // ------------------------------------------------------------
 
 enum RoleUtilisateur {
-  ADMIN       // Victoria
+  ADMIN
   CAISSIER
 }
 
 model Utilisateur {
   id            Int             @id @default(autoincrement())
   nomUtilisateur String         @unique
-  pin           String          // haché
+  pin           String
   nomComplet    String
   role          RoleUtilisateur
   actif         Boolean         @default(true)
@@ -47,7 +37,7 @@ model Utilisateur {
   activationsCarte  CarteCadeauCycle[] @relation("ActivateurCycle")
   offresValidees    ListeCadeauCarteUtilisee[] @relation("ValidateurOffre")
   reglementsCredit  ReglementCredit[]
-  echanges          Echange[]
+  avoirsCrees       Avoir[]
 }
 
 // ------------------------------------------------------------
@@ -76,7 +66,7 @@ model SousFamille {
 }
 
 // ------------------------------------------------------------
-// ARTICLES & STOCK (sans pointures)
+// ARTICLES & STOCK
 // ------------------------------------------------------------
 
 model Article {
@@ -105,22 +95,21 @@ model Article {
   ligneListeCadeau   LigneListeCadeau[]
   stocksEmplacement  StockEmplacement[]
   lignesTransfert    LigneTransfertStock[]
-  lignesEchangeRepris  LigneEchangeRepris[]
-  lignesEchangeNouveau LigneEchangeNouveau[]
+  lignesAvoirRetour  LigneAvoirRetour[]
 }
 
 // ------------------------------------------------------------
-// EMPLACEMENTS & STOCK MULTI-SITE (entrepôt <-> boutique)
+// EMPLACEMENTS & STOCK MULTI-SITE
 // ------------------------------------------------------------
 
 enum TypeLieu {
-  ENTREPOT   // lieu de stockage principal
-  BOUTIQUE   // point de vente
+  ENTREPOT
+  BOUTIQUE
 }
 
 model Lieu {
   id     Int      @id @default(autoincrement())
-  nom    String   @unique // ex: "Entrepôt principal", "Boutique Jesma U"
+  nom    String   @unique
   type   TypeLieu
   actif  Boolean  @default(true)
 
@@ -130,10 +119,8 @@ model Lieu {
   transfertsSource      TransfertStock[] @relation("LieuSource")
   transfertsDestination TransfertStock[] @relation("LieuDestination")
   ventes                Vente[]
-  echanges              Echange[]
 }
 
-// Quantité réelle par article et par emplacement (somme = Article.stockActuel)
 model StockEmplacement {
   id        Int     @id @default(autoincrement())
   articleId Int
@@ -145,10 +132,9 @@ model StockEmplacement {
   @@unique([articleId, lieuId])
 }
 
-// Réception de stock — fournisseur optionnel, arrive dans un lieu donné (en général l'entrepôt)
 model Reception {
   id            Int       @id @default(autoincrement())
-  fournisseur   String?   // optionnel : saisi ou non selon le cas
+  fournisseur   String?
   reference     String?
   lieuId        Int
   lieu          Lieu      @relation(fields: [lieuId], references: [id])
@@ -166,10 +152,9 @@ model LigneReception {
   articleId     Int
   article       Article   @relation(fields: [articleId], references: [id])
   quantite      Int
-  prixAchat     Decimal   // met à jour Article.prixAchat pour le calcul de marge
+  prixAchat     Decimal
 }
 
-// Transfert de stock entrepôt -> boutique (ou inverse si besoin)
 enum StatutTransfert {
   VALIDE
   ANNULE
@@ -216,7 +201,7 @@ model MouvementStock {
   lieuId        Int
   lieu          Lieu               @relation(fields: [lieuId], references: [id])
   type          TypeMouvementStock
-  quantite      Int                // + ou -
+  quantite      Int
   stockAvant    Int
   stockApres    Int
   utilisateurId Int
@@ -276,7 +261,7 @@ model RecompenseFidelite {
 }
 
 // ------------------------------------------------------------
-// VENDEURS (distincts des caissiers, comme à La Pointure)
+// VENDEURS
 // ------------------------------------------------------------
 
 model Vendeur {
@@ -290,7 +275,7 @@ model Vendeur {
 }
 
 // ------------------------------------------------------------
-// VENTES (avec annulation + réversion de stock, crédit, échanges)
+// VENTES (crédit, avoirs, cartes cadeaux)
 // ------------------------------------------------------------
 
 enum StatutVente {
@@ -322,6 +307,8 @@ model Vente {
   modePaiement   String?
   carteCadeauUtiliseeId Int?
   carteCadeauUtilisee   CarteCadeau? @relation(fields: [carteCadeauUtiliseeId], references: [id])
+  avoirUtiliseId Int?
+  avoirUtilise   Avoir?       @relation("AvoirUtiliseSurVente", fields: [avoirUtiliseId], references: [id])
   dateAnnulation DateTime?
   motifAnnulation String?
   createdAt      DateTime     @default(now())
@@ -331,7 +318,7 @@ model Vente {
   demandesRemise DemandeRemise[]
   paiements      PaiementVente[]
   reglements     ReglementCredit[]
-  echangesOrigine Echange[]
+  avoirsOrigine  Avoir[]      @relation("VenteOrigineAvoir")
 }
 
 model LigneVente {
@@ -345,7 +332,6 @@ model LigneVente {
   remiseLigne Decimal @default(0)
 }
 
-// Demande de remise en temps réel avec approbation à distance (comme La Pointure)
 enum StatutDemandeRemise {
   EN_ATTENTE
   APPROUVEE
@@ -368,9 +354,7 @@ model DemandeRemise {
 }
 
 // ------------------------------------------------------------
-// RÈGLEMENTS DE CRÉDIT (paiements reçus après la vente à crédit)
-// Pas de date d'échéance : on suit juste ce qui a déjà été payé.
-// Montant restant dû = Vente.totalNet - somme(PaiementVente) - somme(ReglementCredit)
+// RÈGLEMENTS DE CRÉDIT
 // ------------------------------------------------------------
 
 model ReglementCredit {
@@ -378,65 +362,49 @@ model ReglementCredit {
   venteId       Int
   vente         Vente       @relation(fields: [venteId], references: [id])
   montant       Decimal
-  mode          String      // Espèces, Moov Money, Wave...
+  mode          String
   utilisateurId Int
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
   createdAt     DateTime    @default(now())
 }
 
 // ------------------------------------------------------------
-// RETOURS / ÉCHANGES
-// Jamais de remboursement en espèces : le client reprend au moins un article
-// de valeur équivalente. Si les nouveaux articles coûtent plus cher, il paie
-// la différence. Si c'est moins cher, la différence est perdue (pas d'avoir gardé).
+// RETOURS -> AVOIRS
+// Le retour est toujours rattaché à la vente d'origine. Il génère un avoir
+// (bon à valoir) que le client utilise plus tard sur un futur achat, comme
+// moyen de paiement. Un avoir se consomme en une seule fois, en entier :
+// si le futur achat coûte moins, le reste est perdu (pas de solde reporté).
 // ------------------------------------------------------------
 
-model Echange {
-  id              Int          @id @default(autoincrement())
-  reference       String       @unique
-  venteOrigineId  Int?         // vente d'origine si connue/retrouvée
-  venteOrigine    Vente?       @relation(fields: [venteOrigineId], references: [id])
-  lieuId          Int
-  lieu            Lieu         @relation(fields: [lieuId], references: [id])
-  valeurReprise   Decimal      // valeur totale des articles repris
-  valeurNouveaux  Decimal      // valeur totale des nouveaux articles pris
-  montantAPayer   Decimal      @default(0) // max(0, valeurNouveaux - valeurReprise)
+enum StatutAvoir {
+  ACTIF
+  UTILISE
+}
+
+model Avoir {
+  id              Int         @id @default(autoincrement())
+  reference       String      @unique
+  venteOrigineId  Int
+  venteOrigine    Vente       @relation("VenteOrigineAvoir", fields: [venteOrigineId], references: [id])
+  montant         Decimal
+  statut          StatutAvoir @default(ACTIF)
   utilisateurId   Int
-  utilisateur     Utilisateur  @relation(fields: [utilisateurId], references: [id])
-  createdAt       DateTime     @default(now())
+  utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id])
+  createdAt       DateTime    @default(now())
+  dateUtilisation DateTime?
 
-  articlesRepris   LigneEchangeRepris[]
-  articlesNouveaux LigneEchangeNouveau[]
-  paiements        PaiementEchange[]
+  lignes          LigneAvoirRetour[]
+  venteUtilisation Vente[]    @relation("AvoirUtiliseSurVente")
 }
 
-model LigneEchangeRepris {
+model LigneAvoirRetour {
   id           Int     @id @default(autoincrement())
-  echangeId    Int
-  echange      Echange @relation(fields: [echangeId], references: [id])
+  avoirId      Int
+  avoir        Avoir   @relation(fields: [avoirId], references: [id])
   articleId    Int
   article      Article @relation(fields: [articleId], references: [id])
   quantite     Int
   prixUnitaire Decimal
-}
-
-model LigneEchangeNouveau {
-  id           Int     @id @default(autoincrement())
-  echangeId    Int
-  echange      Echange @relation(fields: [echangeId], references: [id])
-  articleId    Int
-  article      Article @relation(fields: [articleId], references: [id])
-  quantite     Int
-  prixUnitaire Decimal
-}
-
-model PaiementEchange {
-  id        Int      @id @default(autoincrement())
-  echangeId Int
-  echange   Echange  @relation(fields: [echangeId], references: [id])
-  mode      String
-  montant   Decimal
-  createdAt DateTime @default(now())
 }
 
 // ------------------------------------------------------------
@@ -551,7 +519,7 @@ model DetailOffreListeCadeau {
 }
 
 // ------------------------------------------------------------
-// DÉPENSES / BUDGET (13 catégories, visibilité par rôle)
+// DÉPENSES / BUDGET
 // ------------------------------------------------------------
 
 model CategorieDepense {
@@ -573,7 +541,7 @@ model Depense {
 }
 
 // ------------------------------------------------------------
-// PAIEMENTS DE VENTE (paiement mixte : plusieurs modes possibles)
+// PAIEMENTS DE VENTE
 // ------------------------------------------------------------
 
 model PaiementVente {
