@@ -1,8 +1,8 @@
 const prisma = require('../lib/prisma');
 const { appliquerMouvementStock } = require('../lib/stock');
 
-const SEUIL_FIDELITE_MONTANT = 20000; // franc CFA, par achat
-const SEUIL_FIDELITE_ACHATS = 10; // achats consécutifs
+const SEUIL_FIDELITE_MONTANT = 20000;
+const SEUIL_FIDELITE_ACHATS = 10;
 
 function genererNumeroVente() {
   const maintenant = new Date();
@@ -42,16 +42,15 @@ async function mettreAJourFidelite(tx, clientId, totalNet) {
 
 // POST /api/ventes
 // body: { clientId?, vendeurId?, lieuId, remiseMontant?, motifRemise?,
-//         carteCadeauCode?, typeVente? ('COMPTANT' par défaut ou 'CREDIT'),
-//         lignes: [{ articleId, quantite, prixUnitaire, remiseLigne? }],
-//         paiements: [{ mode, montant }, ...] }
-// En COMPTANT : la somme des paiements doit être égale au total net (comme avant).
-// En CREDIT : la somme des paiements peut être inférieure au total net (voire 0) —
-// le reste est suivi comme "montant restant dû" et réglé plus tard via /api/credits.
+//         carteCadeauCode?, avoirCode?, typeVente? ('COMPTANT' par défaut ou 'CREDIT'),
+//         lignes: [...], paiements: [{ mode, montant }, ...] }
+// Un avoir couvre jusqu'à sa valeur le total de la vente ; s'il dépasse le total,
+// l'excédent est perdu (avoir toujours consommé en entier). Ce qu'il ne couvre pas
+// doit être réglé par les paiements classiques (ou laissé en crédit si typeVente=CREDIT).
 async function creerVente(req, res) {
   const {
     clientId, vendeurId, lieuId, remiseMontant, motifRemise,
-    carteCadeauCode, typeVente, lignes, paiements,
+    carteCadeauCode, avoirCode, typeVente, lignes, paiements,
   } = req.body;
   const utilisateurId = req.user.id;
 
@@ -63,9 +62,6 @@ async function creerVente(req, res) {
 
   const listePaiements = Array.isArray(paiements) ? paiements : [];
 
-  if (type === 'COMPTANT' && listePaiements.length === 0) {
-    return res.status(400).json({ error: 'Au moins un mode de paiement est requis.' });
-  }
   for (const p of listePaiements) {
     if (!p.mode || !(Number(p.montant) > 0)) {
       return res.status(400).json({ error: 'Chaque paiement doit avoir un mode et un montant positif.' });
@@ -81,20 +77,35 @@ async function creerVente(req, res) {
       const remise = Number(remiseMontant || 0);
       let totalNet = totalHT - remise;
 
+      // Avoir : vérifié et réservé avant tout calcul de reste à payer.
+      let avoir = null;
+      let contributionAvoir = 0;
+      if (avoirCode) {
+        avoir = await tx.avoir.findUnique({ where: { reference: avoirCode } });
+        if (!avoir) throw new Error('Avoir introuvable.');
+        if (avoir.statut !== 'ACTIF') throw new Error("Cet avoir n'est pas actif (déjà utilisé).");
+        contributionAvoir = Math.min(Number(avoir.montant), totalNet);
+      }
+
       const totalPaiements = listePaiements.reduce((s, p) => s + Number(p.montant), 0);
+      const totalCouvert = totalPaiements + contributionAvoir;
+      const resteApresPaiements = totalNet - totalCouvert;
 
       if (type === 'COMPTANT') {
-        // Tolérance d'arrondi de 1 franc pour éviter les faux positifs liés aux décimales.
-        if (Math.abs(totalPaiements - totalNet) > 1) {
+        if (Math.abs(resteApresPaiements) > 1) {
           throw new Error(
-            `Le total des paiements (${totalPaiements}) ne correspond pas au total de la vente (${totalNet}).`
+            resteApresPaiements > 0
+              ? `Il manque ${resteApresPaiements.toFixed(2)} F pour couvrir le total.`
+              : `Le total des paiements dépasse le montant de ${Math.abs(resteApresPaiements).toFixed(2)} F.`
           );
         }
       } else {
-        // CREDIT : on ne peut pas payer plus que le total de la vente tout de suite.
-        if (totalPaiements > totalNet + 1) {
-          throw new Error(`Le total des paiements (${totalPaiements}) dépasse le total de la vente (${totalNet}).`);
+        if (resteApresPaiements < -1) {
+          throw new Error(`Le total des paiements dépasse le montant de ${Math.abs(resteApresPaiements).toFixed(2)} F.`);
         }
+      }
+      if (type === 'COMPTANT' && listePaiements.length === 0 && contributionAvoir === 0) {
+        throw new Error('Ajoutez au moins un mode de paiement.');
       }
 
       let carteCadeau = null;
@@ -104,7 +115,10 @@ async function creerVente(req, res) {
         if (carteCadeau.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
       }
 
-      const modePaiementResume = listePaiements.map((p) => p.mode).join(', ') || (type === 'CREDIT' ? 'Crédit' : '');
+      const modePaiementResume =
+        listePaiements.map((p) => p.mode).join(', ') +
+        (avoir ? (listePaiements.length ? ', Avoir' : 'Avoir') : '') ||
+        (type === 'CREDIT' ? 'Crédit' : '');
 
       const vente = await tx.vente.create({
         data: {
@@ -119,6 +133,7 @@ async function creerVente(req, res) {
           totalNet,
           modePaiement: modePaiementResume,
           carteCadeauUtiliseeId: carteCadeau ? carteCadeau.id : null,
+          avoirUtiliseId: avoir ? avoir.id : null,
           lignes: {
             create: lignes.map((l) => ({
               articleId: Number(l.articleId),
@@ -164,6 +179,13 @@ async function creerVente(req, res) {
             data: { dateUtilisation: new Date() },
           });
         }
+      }
+
+      if (avoir) {
+        await tx.avoir.update({
+          where: { id: avoir.id },
+          data: { statut: 'UTILISE', dateUtilisation: new Date() },
+        });
       }
 
       if (remise > 0) {
@@ -228,6 +250,13 @@ async function annulerVente(req, res) {
             data: { dateUtilisation: null },
           });
         }
+      }
+
+      if (vente.avoirUtiliseId) {
+        await tx.avoir.update({
+          where: { id: vente.avoirUtiliseId },
+          data: { statut: 'ACTIF', dateUtilisation: null },
+        });
       }
 
       return tx.vente.update({
