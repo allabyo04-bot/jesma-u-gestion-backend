@@ -9,8 +9,6 @@ function genererNumeroVente() {
   return `V-${maintenant.getTime()}`;
 }
 
-// Met à jour le compteur de fidélité du client après une vente validée.
-// Casse la série si l'achat est en dessous du seuil ; déclenche une récompense au 10e.
 async function mettreAJourFidelite(tx, clientId, totalNet) {
   const client = await tx.client.findUnique({ where: { id: clientId } });
   if (!client) return;
@@ -44,25 +42,31 @@ async function mettreAJourFidelite(tx, clientId, totalNet) {
 
 // POST /api/ventes
 // body: { clientId?, vendeurId?, lieuId, remiseMontant?, motifRemise?,
-//         carteCadeauCode?, lignes: [{ articleId, quantite, prixUnitaire, remiseLigne? }],
+//         carteCadeauCode?, typeVente? ('COMPTANT' par défaut ou 'CREDIT'),
+//         lignes: [{ articleId, quantite, prixUnitaire, remiseLigne? }],
 //         paiements: [{ mode, montant }, ...] }
-// "paiements" remplace l'ancien "modePaiement" unique : une vente peut être réglée par
-// plusieurs modes à la fois (ex: moitié espèces + moitié Wave). La somme des montants
-// doit correspondre exactement au total net de la vente.
+// En COMPTANT : la somme des paiements doit être égale au total net (comme avant).
+// En CREDIT : la somme des paiements peut être inférieure au total net (voire 0) —
+// le reste est suivi comme "montant restant dû" et réglé plus tard via /api/credits.
 async function creerVente(req, res) {
   const {
     clientId, vendeurId, lieuId, remiseMontant, motifRemise,
-    carteCadeauCode, lignes, paiements,
+    carteCadeauCode, typeVente, lignes, paiements,
   } = req.body;
   const utilisateurId = req.user.id;
+
+  const type = typeVente === 'CREDIT' ? 'CREDIT' : 'COMPTANT';
 
   if (!lieuId || !Array.isArray(lignes) || lignes.length === 0) {
     return res.status(400).json({ error: 'Lieu de vente et au moins une ligne sont requis.' });
   }
-  if (!Array.isArray(paiements) || paiements.length === 0) {
+
+  const listePaiements = Array.isArray(paiements) ? paiements : [];
+
+  if (type === 'COMPTANT' && listePaiements.length === 0) {
     return res.status(400).json({ error: 'Au moins un mode de paiement est requis.' });
   }
-  for (const p of paiements) {
+  for (const p of listePaiements) {
     if (!p.mode || !(Number(p.montant) > 0)) {
       return res.status(400).json({ error: 'Chaque paiement doit avoir un mode et un montant positif.' });
     }
@@ -77,15 +81,22 @@ async function creerVente(req, res) {
       const remise = Number(remiseMontant || 0);
       let totalNet = totalHT - remise;
 
-      const totalPaiements = paiements.reduce((s, p) => s + Number(p.montant), 0);
-      // Tolérance d'arrondi de 1 franc pour éviter les faux positifs liés aux décimales.
-      if (Math.abs(totalPaiements - totalNet) > 1) {
-        throw new Error(
-          `Le total des paiements (${totalPaiements}) ne correspond pas au total de la vente (${totalNet}).`
-        );
+      const totalPaiements = listePaiements.reduce((s, p) => s + Number(p.montant), 0);
+
+      if (type === 'COMPTANT') {
+        // Tolérance d'arrondi de 1 franc pour éviter les faux positifs liés aux décimales.
+        if (Math.abs(totalPaiements - totalNet) > 1) {
+          throw new Error(
+            `Le total des paiements (${totalPaiements}) ne correspond pas au total de la vente (${totalNet}).`
+          );
+        }
+      } else {
+        // CREDIT : on ne peut pas payer plus que le total de la vente tout de suite.
+        if (totalPaiements > totalNet + 1) {
+          throw new Error(`Le total des paiements (${totalPaiements}) dépasse le total de la vente (${totalNet}).`);
+        }
       }
 
-      // Carte cadeau utilisée en paiement (total ou partiel selon sa dénomination)
       let carteCadeau = null;
       if (carteCadeauCode) {
         carteCadeau = await tx.carteCadeau.findUnique({ where: { codeBarre: carteCadeauCode } });
@@ -93,9 +104,7 @@ async function creerVente(req, res) {
         if (carteCadeau.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
       }
 
-      // Le champ modePaiement (unique) est conservé pour compat/affichage rapide : on y met
-      // la liste des modes utilisés, séparés par virgule (ex: "Espèces, Wave").
-      const modePaiementResume = paiements.map((p) => p.mode).join(', ');
+      const modePaiementResume = listePaiements.map((p) => p.mode).join(', ') || (type === 'CREDIT' ? 'Crédit' : '');
 
       const vente = await tx.vente.create({
         data: {
@@ -104,6 +113,7 @@ async function creerVente(req, res) {
           vendeurId: vendeurId ? Number(vendeurId) : null,
           lieuId: Number(lieuId),
           utilisateurId,
+          typeVente: type,
           totalHT,
           remiseMontant: remise,
           totalNet,
@@ -118,7 +128,7 @@ async function creerVente(req, res) {
             })),
           },
           paiements: {
-            create: paiements.map((p) => ({
+            create: listePaiements.map((p) => ({
               mode: p.mode,
               montant: Number(p.montant),
             })),
@@ -127,7 +137,6 @@ async function creerVente(req, res) {
         include: { lignes: true, paiements: true },
       });
 
-      // Décompte du stock au lieu de vente
       for (const ligne of vente.lignes) {
         await appliquerMouvementStock(tx, {
           articleId: ligne.articleId,
@@ -140,7 +149,6 @@ async function creerVente(req, res) {
         });
       }
 
-      // Clôture du cycle de la carte cadeau utilisée
       if (carteCadeau) {
         await tx.carteCadeau.update({
           where: { id: carteCadeau.id },
@@ -158,7 +166,6 @@ async function creerVente(req, res) {
         }
       }
 
-      // Demande de remise à approuver à distance par Victoria (traçabilité, pas bloquant)
       if (remise > 0) {
         await tx.demandeRemise.create({
           data: {
@@ -170,7 +177,6 @@ async function creerVente(req, res) {
         });
       }
 
-      // Mise à jour de la fidélité, uniquement si un client est identifié
       if (clientId) {
         await mettreAJourFidelite(tx, Number(clientId), totalNet);
       }
@@ -184,8 +190,6 @@ async function creerVente(req, res) {
   }
 }
 
-// POST /api/ventes/:id/annuler   body: { motif }
-// Réinjecte le stock au lieu d'origine de la vente et réactive une éventuelle carte cadeau utilisée.
 async function annulerVente(req, res) {
   const id = Number(req.params.id);
   const { motif } = req.body;
@@ -238,7 +242,6 @@ async function annulerVente(req, res) {
   }
 }
 
-// GET /api/ventes?statut=&lieuId=&clientId=
 async function listerVentes(req, res) {
   const { statut, lieuId, clientId } = req.query;
   const where = {};
