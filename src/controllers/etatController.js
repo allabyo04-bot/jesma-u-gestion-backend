@@ -32,9 +32,6 @@ function construirePeriodeChamp(champ, dateDebut, dateFin) {
 }
 
 // GET /api/etats/marge-produits?dateDebut=&dateFin=
-// Marge = (prix de vente unitaire au moment de la vente - prixAchat courant de l'article) x quantité
-// Note : on utilise le prixAchat COURANT de l'article (dernier connu) comme base, faute d'historique
-// de coût par ligne de vente. C'est cohérent avec la mise à jour du prixAchat à chaque réception.
 async function margeParProduit(req, res) {
   const { dateDebut, dateFin } = req.query;
 
@@ -99,6 +96,38 @@ async function recapBoutique(req, res) {
   });
 }
 
+// GET /api/etats/meilleur-vendeur?dateDebut=&dateFin=&lieuId=
+async function meilleurVendeur(req, res) {
+  const { dateDebut, dateFin, lieuId } = req.query;
+
+  const where = { statut: 'VALIDEE', vendeurId: { not: null }, ...construirePeriode(dateDebut, dateFin) };
+  if (lieuId) where.lieuId = Number(lieuId);
+
+  const ventes = await prisma.vente.findMany({
+    where,
+    include: { vendeur: true },
+  });
+
+  const parVendeur = {};
+  for (const v of ventes) {
+    const key = v.vendeurId;
+    if (!parVendeur[key]) {
+      parVendeur[key] = {
+        vendeurId: key,
+        nom: v.vendeur ? v.vendeur.nom : 'Inconnu',
+        nombreVentes: 0,
+        chiffreAffaires: 0,
+      };
+    }
+    parVendeur[key].nombreVentes += 1;
+    parVendeur[key].chiffreAffaires += Number(v.totalNet);
+  }
+
+  const resultats = Object.values(parVendeur).sort((a, b) => b.chiffreAffaires - a.chiffreAffaires);
+
+  res.json({ periode: { dateDebut: dateDebut || null, dateFin: dateFin || null }, resultats });
+}
+
 // GET /api/etats/marge-produits/export.csv?dateDebut=&dateFin=
 async function exporterMargeCsv(req, res) {
   const { dateDebut, dateFin } = req.query;
@@ -132,7 +161,7 @@ async function exporterMargeCsv(req, res) {
 
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="marge-produits.csv"');
-  res.send('\uFEFF' + lignesCsv.join('\n')); // \uFEFF = BOM pour un bon affichage des accents dans Excel
+  res.send('\uFEFF' + lignesCsv.join('\n'));
 }
 
-module.exports = { margeParProduit, recapBoutique, exporterMargeCsv };
+module.exports = { margeParProduit, recapBoutique, meilleurVendeur, exporterMargeCsv };
