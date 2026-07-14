@@ -6,22 +6,24 @@ function genererReferenceAvoir() {
   return `AV-${maintenant.getTime()}`;
 }
 
-// GET /api/retours/ventes?numero=&clientId=&telephone=
-// Recherche la vente d'origine du client, avant de créer un retour.
+// GET /api/retours/ventes?q=...
 async function rechercherVenteOrigine(req, res) {
-  const { numero, clientId, telephone } = req.query;
+  const { q } = req.query;
+  const terme = (q || '').trim();
 
-  if (!numero && !clientId && !telephone) {
-    return res.status(400).json({ error: 'Indiquez un numéro de vente, un client ou un téléphone.' });
+  if (!terme) {
+    return res.status(400).json({ error: 'Tapez un numéro de vente, un nom ou un téléphone.' });
   }
 
-  const where = { statut: 'VALIDEE' };
-  if (numero) where.numero = { contains: numero, mode: 'insensitive' };
-  if (clientId) where.clientId = Number(clientId);
-  if (telephone) where.client = { telephone: { contains: telephone } };
-
   const ventes = await prisma.vente.findMany({
-    where,
+    where: {
+      statut: 'VALIDEE',
+      OR: [
+        { numero: { contains: terme, mode: 'insensitive' } },
+        { client: { nomComplet: { contains: terme, mode: 'insensitive' } } },
+        { client: { telephone: { contains: terme } } },
+      ],
+    },
     include: { lignes: { include: { article: true } }, client: true, lieu: true },
     orderBy: { createdAt: 'desc' },
     take: 20,
@@ -30,7 +32,6 @@ async function rechercherVenteOrigine(req, res) {
 }
 
 // POST /api/retours   body: { venteOrigineId, lieuId, lignes: [{articleId, quantite, prixUnitaire}] }
-// Crée l'avoir correspondant à la valeur des articles retournés, et réintègre le stock.
 async function creerRetour(req, res) {
   const { venteOrigineId, lieuId, lignes } = req.body;
   const utilisateurId = req.user.id;
@@ -101,4 +102,17 @@ async function listerAvoirs(req, res) {
   res.json(avoirs);
 }
 
-module.exports = { rechercherVenteOrigine, creerRetour, listerAvoirs };
+// GET /api/avoirs/:reference
+// Consultation rapide d'un avoir par son code, pour vérifier sa validité avant de
+// l'utiliser sur une vente (sans encore le consommer).
+async function obtenirAvoirParReference(req, res) {
+  const { reference } = req.params;
+  const avoir = await prisma.avoir.findUnique({
+    where: { reference },
+    include: { venteOrigine: { include: { client: true } } },
+  });
+  if (!avoir) return res.status(404).json({ error: 'Avoir introuvable.' });
+  res.json(avoir);
+}
+
+module.exports = { rechercherVenteOrigine, creerRetour, listerAvoirs, obtenirAvoirParReference };
