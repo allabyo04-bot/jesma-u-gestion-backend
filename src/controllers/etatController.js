@@ -128,6 +128,118 @@ async function meilleurVendeur(req, res) {
   res.json({ periode: { dateDebut: dateDebut || null, dateFin: dateFin || null }, resultats });
 }
 
+// GET /api/etats/par-date?dateDebut=&dateFin=&lieuId=
+async function parDate(req, res) {
+  const { dateDebut, dateFin, lieuId } = req.query;
+  const where = { statut: 'VALIDEE', ...construirePeriode(dateDebut, dateFin) };
+  if (lieuId) where.lieuId = Number(lieuId);
+
+  const ventes = await prisma.vente.findMany({
+    where,
+    include: { client: true, vendeur: true, lieu: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  const total = ventes.reduce((s, v) => s + Number(v.totalNet), 0);
+
+  res.json({
+    periode: { dateDebut: dateDebut || null, dateFin: dateFin || null },
+    nombreVentes: ventes.length,
+    total,
+    ventes,
+  });
+}
+
+// GET /api/etats/par-mode-paiement?dateDebut=&dateFin=&lieuId=
+async function parModePaiement(req, res) {
+  const { dateDebut, dateFin, lieuId } = req.query;
+  const whereVente = { statut: 'VALIDEE', ...construirePeriode(dateDebut, dateFin) };
+  if (lieuId) whereVente.lieuId = Number(lieuId);
+
+  const paiements = await prisma.paiementVente.findMany({
+    where: { vente: whereVente },
+  });
+
+  const parMode = {};
+  for (const p of paiements) {
+    parMode[p.mode] = (parMode[p.mode] || 0) + Number(p.montant);
+  }
+
+  const resultats = Object.entries(parMode)
+    .map(([mode, montant]) => ({ mode, montant }))
+    .sort((a, b) => b.montant - a.montant);
+  const total = resultats.reduce((s, r) => s + r.montant, 0);
+
+  res.json({ periode: { dateDebut: dateDebut || null, dateFin: dateFin || null }, total, resultats });
+}
+
+// GET /api/etats/par-type?dateDebut=&dateFin=&lieuId=
+async function parType(req, res) {
+  const { dateDebut, dateFin, lieuId } = req.query;
+  const where = { statut: 'VALIDEE', ...construirePeriode(dateDebut, dateFin) };
+  if (lieuId) where.lieuId = Number(lieuId);
+
+  const ventes = await prisma.vente.findMany({ where });
+  const comptant = ventes.filter((v) => v.typeVente === 'COMPTANT');
+  const credit = ventes.filter((v) => v.typeVente === 'CREDIT');
+  const somme = (arr) => arr.reduce((s, v) => s + Number(v.totalNet), 0);
+
+  res.json({
+    periode: { dateDebut: dateDebut || null, dateFin: dateFin || null },
+    comptant: { nombre: comptant.length, total: somme(comptant) },
+    credit: { nombre: credit.length, total: somme(credit) },
+  });
+}
+
+// GET /api/etats/fermeture-caisse?date=&lieuId=
+// Photo de la journée : encaissements (ventes du jour + règlements crédit reçus le jour même),
+// dépenses du jour, résultat net, et mouvement des avoirs (émis / utilisés) — sans retour d'espèces.
+async function fermetureCaisse(req, res) {
+  const { date, lieuId } = req.query;
+  const jour = date ? new Date(date) : new Date();
+  const debut = debutJournee(jour);
+  const fin = finJournee(jour);
+
+  const whereVente = { statut: 'VALIDEE', createdAt: { gte: debut, lte: fin } };
+  if (lieuId) whereVente.lieuId = Number(lieuId);
+
+  const ventes = await prisma.vente.findMany({ where: whereVente, include: { paiements: true } });
+
+  const parMode = {};
+  for (const v of ventes) {
+    for (const p of v.paiements) {
+      parMode[p.mode] = (parMode[p.mode] || 0) + Number(p.montant);
+    }
+  }
+
+  const whereReglements = { createdAt: { gte: debut, lte: fin } };
+  if (lieuId) whereReglements.vente = { lieuId: Number(lieuId) };
+  const reglements = await prisma.reglementCredit.findMany({ where: whereReglements });
+  for (const r of reglements) {
+    parMode[r.mode] = (parMode[r.mode] || 0) + Number(r.montant);
+  }
+
+  const totalEncaisse = Object.values(parMode).reduce((s, m) => s + m, 0);
+
+  const depenses = await prisma.depense.findMany({
+    where: construirePeriodeChamp('dateDepense', date, date),
+  });
+  const totalDepenses = depenses.reduce((s, d) => s + Number(d.montant), 0);
+
+  const avoirsEmis = await prisma.avoir.findMany({ where: { createdAt: { gte: debut, lte: fin } } });
+  const avoirsUtilises = await prisma.avoir.findMany({ where: { dateUtilisation: { gte: debut, lte: fin } } });
+
+  res.json({
+    date: jour.toISOString().slice(0, 10),
+    nombreVentes: ventes.length,
+    parModePaiement: Object.entries(parMode).map(([mode, montant]) => ({ mode, montant })),
+    totalEncaisse,
+    totalDepenses,
+    resultatNet: totalEncaisse - totalDepenses,
+    avoirsEmis: { nombre: avoirsEmis.length, montant: avoirsEmis.reduce((s, a) => s + Number(a.montant), 0) },
+    avoirsUtilises: { nombre: avoirsUtilises.length, montant: avoirsUtilises.reduce((s, a) => s + Number(a.montant), 0) },
+  });
+}
+
 // GET /api/etats/marge-produits/export.csv?dateDebut=&dateFin=
 async function exporterMargeCsv(req, res) {
   const { dateDebut, dateFin } = req.query;
@@ -164,4 +276,8 @@ async function exporterMargeCsv(req, res) {
   res.send('\uFEFF' + lignesCsv.join('\n'));
 }
 
-module.exports = { margeParProduit, recapBoutique, meilleurVendeur, exporterMargeCsv };
+module.exports = {
+  margeParProduit, recapBoutique, meilleurVendeur,
+  parDate, parModePaiement, parType, fermetureCaisse,
+  exporterMargeCsv,
+};
