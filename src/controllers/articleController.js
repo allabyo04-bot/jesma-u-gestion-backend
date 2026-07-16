@@ -138,4 +138,96 @@ async function genererCodeBarre(req, res) {
 
 // GET /api/articles/a-imprimer  -> file d'attente des étiquettes à imprimer
 async function listerCodesAImprimer(req, res) {
-  const articles = await
+  const articles = await prisma.article.findMany({
+    where: { codeBarreGenere: true, actif: true },
+    orderBy: { designation: 'asc' },
+  });
+  res.json(articles);
+}
+
+// GET /api/articles/a-imprimer/etiquettes  -> page HTML imprimable (Ctrl+P côté navigateur)
+async function imprimerEtiquettes(req, res) {
+  const articles = await prisma.article.findMany({
+    where: { codeBarreGenere: true, actif: true },
+    orderBy: { designation: 'asc' },
+  });
+
+  const etiquettes = articles.map((a) => `
+    <div class="etiquette">
+      <div class="designation">${a.designation}</div>
+      <div class="prix">${Number(a.prixVente).toLocaleString('fr-FR')} F</div>
+      ${genererSvgEAN13(a.codeBarre)}
+      <div class="code">${a.codeBarre}</div>
+    </div>
+  `).join('\n');
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Étiquettes à imprimer - Jesma U</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; }
+  .grille { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; }
+  .etiquette {
+    width: 220px; border: 1px dashed #999; padding: 8px; text-align: center;
+    page-break-inside: avoid;
+  }
+  .designation { font-size: 12px; font-weight: bold; margin-bottom: 4px; }
+  .prix { font-size: 13px; margin-bottom: 4px; }
+  .code { font-size: 11px; letter-spacing: 1px; margin-top: 2px; }
+  @media print {
+    .etiquette { border: 1px solid #000; }
+  }
+</style>
+</head>
+<body>
+  <div class="grille">${etiquettes || '<p>Aucune étiquette en attente.</p>'}</div>
+  <script>window.onload = () => window.print();</script>
+</body>
+</html>`;
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+}
+
+// POST /api/articles/:id/photo (multipart/form-data, champ "photo")
+async function uploaderPhoto(req, res) {
+  const id = Number(req.params.id);
+  const article = await prisma.article.findUnique({ where: { id } });
+  if (!article) return res.status(404).json({ error: 'Article introuvable.' });
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'Aucune image reçue.' });
+  }
+
+  try {
+    const resultat = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: 'jesma-u/articles', resource_type: 'image' },
+        (error, result) => (error ? reject(error) : resolve(result)),
+      );
+      stream.end(req.file.buffer);
+    });
+
+    const misAJour = await prisma.article.update({
+      where: { id },
+      data: { photoUrl: resultat.secure_url },
+    });
+
+    res.json(misAJour);
+  } catch (err) {
+    res.status(500).json({ error: "Échec de l'upload de la photo." });
+  }
+}
+
+module.exports = {
+  listerArticles,
+  rechercherArticle,
+  creerArticle,
+  modifierArticle,
+  genererCodeBarre,
+  listerCodesAImprimer,
+  imprimerEtiquettes,
+  uploaderPhoto,
+};
