@@ -18,6 +18,7 @@ const vendeurRoutes = require('./routes/vendeurRoutes');
 const creditRoutes = require('./routes/creditRoutes');
 const retourRoutes = require('./routes/retourRoutes');
 const avoirRoutes = require('./routes/avoirRoutes');
+const utilisateurRoutes = require('./routes/utilisateurRoutes');
 
 const app = express();
 app.use(cors());
@@ -41,6 +42,7 @@ app.use('/api/vendeurs', vendeurRoutes);
 app.use('/api/credits', creditRoutes);
 app.use('/api/retours', retourRoutes);
 app.use('/api/avoirs', avoirRoutes);
+app.use('/api/utilisateurs', utilisateurRoutes);
 
 // Gestionnaire d'erreurs générique
 app.use((err, req, res, next) => {
