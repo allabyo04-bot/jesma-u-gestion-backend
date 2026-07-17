@@ -12,6 +12,7 @@ async function login(req, res) {
 
   const utilisateur = await prisma.utilisateur.findUnique({
     where: { nomUtilisateur },
+    include: { roleDynamique: { include: { permissions: true } } },
   });
 
   if (!utilisateur || !utilisateur.actif) {
@@ -23,8 +24,27 @@ async function login(req, res) {
     return res.status(401).json({ error: 'Identifiants invalides.' });
   }
 
+  // Liste des modules autorisés, tirée du rôle dynamique si présent, sinon repli sur
+  // l'ancien système fixe (ADMIN = tout, CAISSIER = Ventes+Dépenses) pour ne rien casser
+  // tant que tous les comptes n'ont pas encore été migrés vers un rôle.
+  let permissions;
+  if (utilisateur.roleDynamique) {
+    permissions = utilisateur.roleDynamique.permissions
+      .filter((p) => p.actif)
+      .map((p) => p.module);
+  } else {
+    permissions = utilisateur.role === 'ADMIN'
+      ? ['VENTES', 'STOCK', 'ARTICLES', 'DEPENSES', 'RAPPORTS', 'UTILISATEURS']
+      : ['VENTES', 'DEPENSES'];
+  }
+
   const token = jwt.sign(
-    { id: utilisateur.id, nomUtilisateur: utilisateur.nomUtilisateur, role: utilisateur.role },
+    {
+      id: utilisateur.id,
+      nomUtilisateur: utilisateur.nomUtilisateur,
+      role: utilisateur.role,
+      permissions,
+    },
     process.env.JWT_SECRET,
     { expiresIn: '12h' }
   );
@@ -36,6 +56,8 @@ async function login(req, res) {
       nomUtilisateur: utilisateur.nomUtilisateur,
       nomComplet: utilisateur.nomComplet,
       role: utilisateur.role,
+      roleNom: utilisateur.roleDynamique?.nom || null,
+      permissions,
     },
   });
 }
