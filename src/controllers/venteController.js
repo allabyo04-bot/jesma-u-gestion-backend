@@ -41,12 +41,6 @@ async function mettreAJourFidelite(tx, clientId, totalNet) {
 }
 
 // POST /api/ventes
-// body: { clientId?, vendeurId?, lieuId, remiseMontant?, motifRemise?,
-//         carteCadeauCode?, avoirCode?, typeVente? ('COMPTANT' par défaut ou 'CREDIT'),
-//         lignes: [...], paiements: [{ mode, montant }, ...] }
-// Un avoir couvre jusqu'à sa valeur le total de la vente ; s'il dépasse le total,
-// l'excédent est perdu (avoir toujours consommé en entier). Ce qu'il ne couvre pas
-// doit être réglé par les paiements classiques (ou laissé en crédit si typeVente=CREDIT).
 async function creerVente(req, res) {
   const {
     clientId, vendeurId, lieuId, remiseMontant, motifRemise,
@@ -77,7 +71,6 @@ async function creerVente(req, res) {
       const remise = Number(remiseMontant || 0);
       let totalNet = totalHT - remise;
 
-      // Avoir : vérifié et réservé avant tout calcul de reste à payer.
       let avoir = null;
       let contributionAvoir = 0;
       if (avoirCode) {
@@ -212,6 +205,66 @@ async function creerVente(req, res) {
   }
 }
 
+// POST /api/ventes/:id/demander-annulation   { motif }
+async function demanderAnnulation(req, res) {
+  const id = Number(req.params.id);
+  const { motif } = req.body;
+  const utilisateurId = req.user.id;
+
+  const vente = await prisma.vente.findUnique({ where: { id } });
+  if (!vente) return res.status(404).json({ error: 'Vente introuvable.' });
+  if (vente.statut === 'ANNULEE') return res.status(400).json({ error: 'Cette vente est déjà annulée.' });
+  if (vente.demandeAnnulationEnCours) return res.status(400).json({ error: 'Une demande est déjà en attente pour cette vente.' });
+
+  const misAJour = await prisma.vente.update({
+    where: { id },
+    data: {
+      demandeAnnulationEnCours: true,
+      motifDemandeAnnulation: motif || null,
+      demandeurAnnulationId: utilisateurId,
+      dateDemandeAnnulation: new Date(),
+    },
+  });
+
+  res.json(misAJour);
+}
+
+// GET /api/ventes/demandes-annulation   (ADMIN uniquement)
+async function listerDemandesAnnulation(req, res) {
+  const ventes = await prisma.vente.findMany({
+    where: { demandeAnnulationEnCours: true },
+    include: {
+      lignes: { include: { article: true } },
+      client: true,
+      vendeur: true,
+      lieu: true,
+      demandeurAnnulation: true,
+    },
+    orderBy: { dateDemandeAnnulation: 'desc' },
+  });
+  res.json(ventes);
+}
+
+// POST /api/ventes/:id/rejeter-annulation   (ADMIN uniquement)
+async function rejeterAnnulation(req, res) {
+  const id = Number(req.params.id);
+  const vente = await prisma.vente.findUnique({ where: { id } });
+  if (!vente) return res.status(404).json({ error: 'Vente introuvable.' });
+
+  const misAJour = await prisma.vente.update({
+    where: { id },
+    data: {
+      demandeAnnulationEnCours: false,
+      motifDemandeAnnulation: null,
+      demandeurAnnulationId: null,
+      dateDemandeAnnulation: null,
+    },
+  });
+
+  res.json(misAJour);
+}
+
+// POST /api/ventes/:id/annuler   body: { motif }   (ADMIN uniquement)
 async function annulerVente(req, res) {
   const id = Number(req.params.id);
   const { motif } = req.body;
@@ -261,7 +314,15 @@ async function annulerVente(req, res) {
 
       return tx.vente.update({
         where: { id },
-        data: { statut: 'ANNULEE', dateAnnulation: new Date(), motifAnnulation: motif || null },
+        data: {
+          statut: 'ANNULEE',
+          dateAnnulation: new Date(),
+          motifAnnulation: motif || vente.motifDemandeAnnulation || null,
+          demandeAnnulationEnCours: false,
+          motifDemandeAnnulation: null,
+          demandeurAnnulationId: null,
+          dateDemandeAnnulation: null,
+        },
       });
     }, { maxWait: 10000, timeout: 20000 });
 
@@ -271,6 +332,7 @@ async function annulerVente(req, res) {
   }
 }
 
+// GET /api/ventes?statut=&lieuId=&clientId=
 async function listerVentes(req, res) {
   const { statut, lieuId, clientId } = req.query;
   const where = {};
@@ -286,10 +348,14 @@ async function listerVentes(req, res) {
       client: true,
       vendeur: true,
       utilisateur: true,
+      lieu: true,
     },
     orderBy: { createdAt: 'desc' },
   });
   res.json(ventes);
 }
 
-module.exports = { creerVente, annulerVente, listerVentes };
+module.exports = {
+  creerVente, annulerVente, listerVentes,
+  demanderAnnulation, listerDemandesAnnulation, rejeterAnnulation,
+};
