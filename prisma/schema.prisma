@@ -20,12 +20,46 @@ enum RoleUtilisateur {
   CAISSIER
 }
 
+enum ModulePermission {
+  VENTES
+  STOCK
+  ARTICLES
+  DEPENSES
+  RAPPORTS
+  UTILISATEURS
+}
+
+// Rôles personnalisables (remplace progressivement l'enum RoleUtilisateur ci-dessus).
+// "Administrateur" est créé automatiquement, verrouillé (modifiable=false), accès total.
+model Role {
+  id          Int              @id @default(autoincrement())
+  nom         String           @unique
+  estAdmin    Boolean          @default(false)
+  modifiable  Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+
+  permissions   RolePermission[]
+  utilisateurs  Utilisateur[]
+}
+
+model RolePermission {
+  id      Int               @id @default(autoincrement())
+  roleId  Int
+  role    Role              @relation(fields: [roleId], references: [id])
+  module  ModulePermission
+  actif   Boolean           @default(false)
+
+  @@unique([roleId, module])
+}
+
 model Utilisateur {
   id            Int             @id @default(autoincrement())
   nomUtilisateur String         @unique
   pin           String
   nomComplet    String
   role          RoleUtilisateur
+  roleId        Int?
+  roleDynamique Role?           @relation(fields: [roleId], references: [id])
   lieuId        Int?
   lieu          Lieu?           @relation(fields: [lieuId], references: [id])
   actif         Boolean         @default(true)
