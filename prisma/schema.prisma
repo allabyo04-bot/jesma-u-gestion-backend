@@ -40,6 +40,7 @@ model Utilisateur {
   offresValidees    ListeCadeauCarteUtilisee[] @relation("ValidateurOffre")
   reglementsCredit  ReglementCredit[]
   avoirsCrees       Avoir[]
+  demandesAnnulation Vente[]    @relation("DemandeurAnnulationVente")
 }
 
 // ------------------------------------------------------------
@@ -278,7 +279,7 @@ model Vendeur {
 }
 
 // ------------------------------------------------------------
-// VENTES (crédit, avoirs, cartes cadeaux)
+// VENTES (crédit, avoirs, cartes cadeaux, demande d'annulation)
 // ------------------------------------------------------------
 
 enum StatutVente {
@@ -314,6 +315,11 @@ model Vente {
   avoirUtilise   Avoir?       @relation("AvoirUtiliseSurVente", fields: [avoirUtiliseId], references: [id])
   dateAnnulation DateTime?
   motifAnnulation String?
+  demandeAnnulationEnCours Boolean   @default(false)
+  motifDemandeAnnulation   String?
+  demandeurAnnulationId    Int?
+  demandeurAnnulation      Utilisateur? @relation("DemandeurAnnulationVente", fields: [demandeurAnnulationId], references: [id])
+  dateDemandeAnnulation    DateTime?
   createdAt      DateTime     @default(now())
 
   lignes         LigneVente[]
