@@ -1,9 +1,17 @@
 const prisma = require('../lib/prisma');
 
-// GET /api/vendeurs
+// GET /api/vendeurs   (actifs uniquement — utilisé par la Caisse)
 async function listerVendeurs(req, res) {
   const vendeurs = await prisma.vendeur.findMany({
     where: { actif: true },
+    orderBy: { nomComplet: 'asc' },
+  });
+  res.json(vendeurs);
+}
+
+// GET /api/vendeurs/tous   (ADMIN — actifs + désactivés, pour l'écran de gestion)
+async function listerTousVendeurs(req, res) {
+  const vendeurs = await prisma.vendeur.findMany({
     orderBy: { nomComplet: 'asc' },
   });
   res.json(vendeurs);
@@ -19,4 +27,21 @@ async function creerVendeur(req, res) {
   res.status(201).json(vendeur);
 }
 
-module.exports = { listerVendeurs, creerVendeur };
+// PUT /api/vendeurs/:id   { nomComplet?, telephone?, actif? }
+async function modifierVendeur(req, res) {
+  const id = Number(req.params.id);
+  const { nomComplet, telephone, actif } = req.body;
+
+  const donnees = {};
+  if (nomComplet !== undefined) donnees.nomComplet = nomComplet;
+  if (telephone !== undefined) donnees.telephone = telephone || null;
+  if (actif !== undefined) donnees.actif = actif;
+
+  const vendeur = await prisma.vendeur.update({
+    where: { id },
+    data: donnees,
+  });
+  res.json(vendeur);
+}
+
+module.exports = { listerVendeurs, listerTousVendeurs, creerVendeur, modifierVendeur };

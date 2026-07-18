@@ -53,6 +53,9 @@ async function creerVente(req, res) {
   if (!lieuId || !Array.isArray(lignes) || lignes.length === 0) {
     return res.status(400).json({ error: 'Lieu de vente et au moins une ligne sont requis.' });
   }
+  if (!vendeurId) {
+    return res.status(400).json({ error: 'Le vendeur est obligatoire.' });
+  }
 
   const listePaiements = Array.isArray(paiements) ? paiements : [];
 
