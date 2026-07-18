@@ -55,57 +55,77 @@ async function rechercherArticle(req, res) {
 }
 
 // POST /api/articles
+// Famille et sous-famille sont désormais obligatoires. La référence n'est plus saisie
+// à la main : elle est générée automatiquement à partir du code de la sous-famille
+// (ex: "ANDT" + numéro suivant = "ANDT06"), de façon atomique pour éviter les doublons
+// si deux créations arrivent en même temps.
 async function creerArticle(req, res) {
   const {
-    reference, codeBarre, codeInterne, designation,
+    codeBarre, codeInterne, designation,
     familleId, sousFamilleId, prixAchat, prixVente, seuilAlerte,
   } = req.body;
 
-  if (!reference || !designation || prixVente === undefined) {
-    return res.status(400).json({ error: 'Référence, désignation et prix de vente sont requis.' });
+  if (!designation || !familleId || !sousFamilleId || prixVente === undefined) {
+    return res.status(400).json({ error: 'Désignation, famille, sous-famille et prix de vente sont requis.' });
   }
 
-  const article = await prisma.article.create({
-    data: {
-      reference,
-      codeBarre: codeBarre || null,
-      codeInterne: codeInterne || null,
-      designation,
-      familleId: familleId ? Number(familleId) : null,
-      sousFamilleId: sousFamilleId ? Number(sousFamilleId) : null,
-      prixAchat: prixAchat || 0,
-      prixVente,
-      seuilAlerte: seuilAlerte ?? 5,
-    },
-  });
+  try {
+    const article = await prisma.$transaction(async (tx) => {
+      const sousFamille = await tx.sousFamille.findUnique({ where: { id: Number(sousFamilleId) } });
+      if (!sousFamille) throw new Error('Sous-famille introuvable.');
 
-  res.status(201).json(article);
+      const nouveauNumero = sousFamille.dernierNumero + 1;
+      const reference = `${sousFamille.codePrefixe}${String(nouveauNumero).padStart(2, '0')}`;
+
+      await tx.sousFamille.update({
+        where: { id: sousFamille.id },
+        data: { dernierNumero: nouveauNumero },
+      });
+
+      return tx.article.create({
+        data: {
+          reference,
+          codeBarre: codeBarre || null,
+          codeInterne: codeInterne || null,
+          designation,
+          familleId: Number(familleId),
+          sousFamilleId: Number(sousFamilleId),
+          prixAchat: prixAchat || 0,
+          prixVente,
+          seuilAlerte: seuilAlerte ?? 5,
+        },
+      });
+    });
+
+    res.status(201).json(article);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 }
 
 // PUT /api/articles/:id
-// Modifie un article existant. Le code-barre et le code interne ne se changent pas ici
-// (ils passent par la génération dédiée) pour éviter d'écraser par erreur un scan existant.
+// La référence n'est jamais modifiable ici (elle reste liée à la sous-famille d'origine),
+// tout comme le code-barre (géré via "Générer un code-barre").
 async function modifierArticle(req, res) {
   const id = Number(req.params.id);
   const {
-    reference, designation, familleId, sousFamilleId,
+    designation, familleId, sousFamilleId,
     prixAchat, prixVente, seuilAlerte, actif,
   } = req.body;
 
   const article = await prisma.article.findUnique({ where: { id } });
   if (!article) return res.status(404).json({ error: 'Article introuvable.' });
 
-  if (!reference || !designation || prixVente === undefined) {
-    return res.status(400).json({ error: 'Référence, désignation et prix de vente sont requis.' });
+  if (!designation || !familleId || !sousFamilleId || prixVente === undefined) {
+    return res.status(400).json({ error: 'Désignation, famille, sous-famille et prix de vente sont requis.' });
   }
 
   const misAJour = await prisma.article.update({
     where: { id },
     data: {
-      reference,
       designation,
-      familleId: familleId ? Number(familleId) : null,
-      sousFamilleId: sousFamilleId ? Number(sousFamilleId) : null,
+      familleId: Number(familleId),
+      sousFamilleId: Number(sousFamilleId),
       prixAchat: prixAchat !== undefined ? prixAchat : article.prixAchat,
       prixVente,
       seuilAlerte: seuilAlerte ?? article.seuilAlerte,
@@ -117,8 +137,6 @@ async function modifierArticle(req, res) {
 }
 
 // POST /api/articles/:id/generer-code-barre
-// Utilisé quand le lecteur ne trouve rien à scanner sur un article existant : on génère
-// un code interne EAN-13 et on le marque pour impression d'étiquette.
 async function genererCodeBarre(req, res) {
   const id = Number(req.params.id);
   const article = await prisma.article.findUnique({ where: { id } });
@@ -136,7 +154,7 @@ async function genererCodeBarre(req, res) {
   res.json(misAJour);
 }
 
-// GET /api/articles/a-imprimer  -> file d'attente des étiquettes à imprimer
+// GET /api/articles/a-imprimer
 async function listerCodesAImprimer(req, res) {
   const articles = await prisma.article.findMany({
     where: { codeBarreGenere: true, actif: true },
@@ -145,7 +163,7 @@ async function listerCodesAImprimer(req, res) {
   res.json(articles);
 }
 
-// GET /api/articles/a-imprimer/etiquettes  -> page HTML imprimable (Ctrl+P côté navigateur)
+// GET /api/articles/a-imprimer/etiquettes
 async function imprimerEtiquettes(req, res) {
   const articles = await prisma.article.findMany({
     where: { codeBarreGenere: true, actif: true },
@@ -191,7 +209,7 @@ async function imprimerEtiquettes(req, res) {
   res.send(html);
 }
 
-// POST /api/articles/:id/photo (multipart/form-data, champ "photo")
+// POST /api/articles/:id/photo
 async function uploaderPhoto(req, res) {
   const id = Number(req.params.id);
   const article = await prisma.article.findUnique({ where: { id } });
