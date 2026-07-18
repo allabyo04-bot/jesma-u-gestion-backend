@@ -9,12 +9,39 @@ async function listerDenominations(req, res) {
   res.json(denominations);
 }
 
+// GET /api/cartes-cadeaux/denominations/toutes  (ADMIN — inclut les désactivées, pour l'écran de gestion)
+async function listerToutesDenominations(req, res) {
+  const denominations = await prisma.denominationCarteCadeau.findMany({
+    orderBy: { montant: 'asc' },
+  });
+  res.json(denominations);
+}
+
 // POST /api/cartes-cadeaux/denominations   { montant }
 async function creerDenomination(req, res) {
   const { montant } = req.body;
-  if (!montant) return res.status(400).json({ error: 'Montant requis.' });
-  const denomination = await prisma.denominationCarteCadeau.create({ data: { montant } });
-  res.status(201).json(denomination);
+  if (!montant || Number(montant) <= 0) return res.status(400).json({ error: 'Montant requis.' });
+  try {
+    const denomination = await prisma.denominationCarteCadeau.create({ data: { montant: Number(montant) } });
+    res.status(201).json(denomination);
+  } catch (err) {
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Cette dénomination existe déjà.' });
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+}
+
+// PUT /api/cartes-cadeaux/denominations/:id   { actif }
+async function modifierDenomination(req, res) {
+  const id = Number(req.params.id);
+  const { actif } = req.body;
+  const denomination = await prisma.denominationCarteCadeau.findUnique({ where: { id } });
+  if (!denomination) return res.status(404).json({ error: 'Dénomination introuvable.' });
+
+  const misAJour = await prisma.denominationCarteCadeau.update({
+    where: { id },
+    data: { actif: actif !== undefined ? actif : denomination.actif },
+  });
+  res.json(misAJour);
 }
 
 // GET /api/cartes-cadeaux/:codeBarre
@@ -28,8 +55,6 @@ async function obtenirCarteCadeau(req, res) {
 }
 
 // POST /api/cartes-cadeaux/activer   { codeBarre, denomination }
-// Active (ou réactive) une carte cadeau physique avec une dénomination fixe. Si la carte
-// n'existe pas encore en base (première vente de cette carte physique), elle est créée.
 async function activerCarteCadeau(req, res) {
   const { codeBarre, denomination } = req.body;
   const utilisateurId = req.user.id;
@@ -85,5 +110,6 @@ async function listerCartesCadeaux(req, res) {
 }
 
 module.exports = {
-  listerDenominations, creerDenomination, obtenirCarteCadeau, activerCarteCadeau, listerCartesCadeaux,
+  listerDenominations, listerToutesDenominations, creerDenomination, modifierDenomination,
+  obtenirCarteCadeau, activerCarteCadeau, listerCartesCadeaux,
 };
