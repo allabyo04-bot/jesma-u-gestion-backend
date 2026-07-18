@@ -13,9 +13,6 @@ function finJournee(date = new Date()) {
 }
 
 // GET /api/depenses?categorieId=&dateDebut=&dateFin=&utilisateurId=
-// Visibilité par rôle, comme à La Pointure :
-//  - CAISSIER : uniquement ses propres dépenses du jour (les filtres de date sont ignorés)
-//  - ADMIN (Victoria) : tout, avec filtres libres
 async function listerDepenses(req, res) {
   const { categorieId, dateDebut, dateFin, utilisateurId } = req.query;
 
@@ -70,8 +67,54 @@ async function listerCategories(req, res) {
   res.json(categories);
 }
 
+// POST /api/depenses/categories   { nom }   (ADMIN uniquement)
+async function creerCategorie(req, res) {
+  const { nom } = req.body;
+  if (!nom || !nom.trim()) return res.status(400).json({ error: 'Le nom de la catégorie est requis.' });
+  try {
+    const categorie = await prisma.categorieDepense.create({ data: { nom: nom.trim() } });
+    res.status(201).json(categorie);
+  } catch (err) {
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Cette catégorie existe déjà.' });
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+}
+
+// PUT /api/depenses/categories/:id   { nom }   (ADMIN uniquement)
+async function modifierCategorie(req, res) {
+  const id = Number(req.params.id);
+  const { nom } = req.body;
+  if (!nom || !nom.trim()) return res.status(400).json({ error: 'Le nom de la catégorie est requis.' });
+
+  const categorie = await prisma.categorieDepense.findUnique({ where: { id } });
+  if (!categorie) return res.status(404).json({ error: 'Catégorie introuvable.' });
+
+  try {
+    const misAJour = await prisma.categorieDepense.update({ where: { id }, data: { nom: nom.trim() } });
+    res.json(misAJour);
+  } catch (err) {
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Cette catégorie existe déjà.' });
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+}
+
+// DELETE /api/depenses/categories/:id   (ADMIN uniquement)
+// Refuse la suppression si des dépenses existantes utilisent encore cette catégorie.
+async function supprimerCategorie(req, res) {
+  const id = Number(req.params.id);
+  const categorie = await prisma.categorieDepense.findUnique({
+    where: { id },
+    include: { _count: { select: { depenses: true } } },
+  });
+  if (!categorie) return res.status(404).json({ error: 'Catégorie introuvable.' });
+  if (categorie._count.depenses > 0) {
+    return res.status(400).json({ error: `Cette catégorie est utilisée par ${categorie._count.depenses} dépense(s), suppression impossible.` });
+  }
+  await prisma.categorieDepense.delete({ where: { id } });
+  res.json({ ok: true });
+}
+
 // GET /api/depenses/budget?dateDebut=&dateFin=   (ADMIN uniquement)
-// Synthèse : total par catégorie sur la période, pour le module Budget.
 async function syntheseBudget(req, res) {
   const { dateDebut, dateFin } = req.query;
 
@@ -101,4 +144,6 @@ async function syntheseBudget(req, res) {
   });
 }
 
-module.exports = { listerDepenses, creerDepense, listerCategories, syntheseBudget };
+module.exports = {
+  listerDepenses, creerDepense, listerCategories, creerCategorie, modifierCategorie, supprimerCategorie, syntheseBudget,
+};
