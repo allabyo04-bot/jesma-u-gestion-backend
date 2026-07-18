@@ -114,7 +114,7 @@ async function meilleurVendeur(req, res) {
     if (!parVendeur[key]) {
       parVendeur[key] = {
         vendeurId: key,
-        nom: v.vendeur ? v.vendeur.nom : 'Inconnu',
+        nom: v.vendeur ? v.vendeur.nomComplet : 'Inconnu',
         nombreVentes: 0,
         chiffreAffaires: 0,
       };
@@ -123,7 +123,7 @@ async function meilleurVendeur(req, res) {
     parVendeur[key].chiffreAffaires += Number(v.totalNet);
   }
 
-  const resultats = Object.values(parVendeur).sort((a, b) => b.chiffreAffaires - a.chiffreAffaires);
+  const resultats = Object.values(parVendeur).sort((a, b) => b.nombreVentes - a.nombreVentes);
 
   res.json({ periode: { dateDebut: dateDebut || null, dateFin: dateFin || null }, resultats });
 }
