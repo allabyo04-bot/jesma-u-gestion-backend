@@ -29,8 +29,6 @@ enum ModulePermission {
   UTILISATEURS
 }
 
-// Rôles personnalisables (remplace progressivement l'enum RoleUtilisateur ci-dessus).
-// "Administrateur" est créé automatiquement, verrouillé (modifiable=false), accès total.
 model Role {
   id          Int              @id @default(autoincrement())
   nom         String           @unique
@@ -90,12 +88,17 @@ model Famille {
   articles      Article[]
 }
 
+// codePrefixe : choisi par Victoria à la création (ex: "ANDT"), sert de base à la
+// génération automatique de la référence de chaque article de cette sous-famille.
+// dernierNumero : compteur interne, incrémenté à chaque nouvel article (ANDT01, ANDT02...).
 model SousFamille {
-  id          Int      @id @default(autoincrement())
-  nom         String
-  familleId   Int
-  famille     Famille  @relation(fields: [familleId], references: [id])
-  actif       Boolean  @default(true)
+  id             Int      @id @default(autoincrement())
+  nom            String
+  codePrefixe    String   @unique
+  dernierNumero  Int      @default(0)
+  familleId      Int
+  famille        Famille  @relation(fields: [familleId], references: [id])
+  actif          Boolean  @default(true)
 
   articles    Article[]
 
