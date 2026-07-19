@@ -19,6 +19,7 @@ const creditRoutes = require('./routes/creditRoutes');
 const retourRoutes = require('./routes/retourRoutes');
 const avoirRoutes = require('./routes/avoirRoutes');
 const utilisateurRoutes = require('./routes/utilisateurRoutes');
+const fideliteRoutes = require('./routes/fideliteRoutes');
 const roleRoutes = require('./routes/roleRoutes');
 
 const app = express();
@@ -44,6 +45,7 @@ app.use('/api/credits', creditRoutes);
 app.use('/api/retours', retourRoutes);
 app.use('/api/avoirs', avoirRoutes);
 app.use('/api/utilisateurs', utilisateurRoutes);
+app.use('/api/fidelite', fideliteRoutes);
 app.use('/api/roles', roleRoutes);
 
 // Gestionnaire d'erreurs générique
