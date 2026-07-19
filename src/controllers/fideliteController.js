@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { appliquerMouvementStock } = require('../lib/stock');
 
 // GET /api/fidelite?statut=
 // Le modèle RecompenseFidelite n'a pas de relation Prisma directe vers Article
@@ -64,22 +65,44 @@ async function definirRecompense(req, res) {
   res.json(misAJour);
 }
 
-// POST /api/fidelite/:id/marquer-utilisee
+// POST /api/fidelite/:id/marquer-utilisee   { lieuId? }
+// lieuId est obligatoire quand le cadeau est un article offert, pour savoir
+// de quelle boutique/entrepôt le sortir du stock.
 async function marquerUtilisee(req, res) {
   const id = Number(req.params.id);
+  const { lieuId } = req.body;
+  const utilisateurId = req.user.id;
 
-  const recompense = await prisma.recompenseFidelite.findUnique({ where: { id } });
+  const recompense = await prisma.recompenseFidelite.findUnique({ where: { id }, include: { client: true } });
   if (!recompense) return res.status(404).json({ error: 'Récompense introuvable.' });
   if (recompense.statut !== 'DEFINIE') {
     return res.status(400).json({ error: 'Définissez le cadeau avant de le marquer comme remis.' });
   }
+  if (recompense.type === 'ARTICLE' && !lieuId) {
+    return res.status(400).json({ error: "Choisissez la boutique/entrepôt d'où sort l'article offert." });
+  }
 
-  const misAJour = await prisma.recompenseFidelite.update({
-    where: { id },
-    data: { statut: 'UTILISEE', dateUtilisation: new Date() },
-  });
-
-  res.json(misAJour);
+  try {
+    const misAJour = await prisma.$transaction(async (tx) => {
+      if (recompense.type === 'ARTICLE') {
+        await appliquerMouvementStock(tx, {
+          articleId: recompense.articleOffertId,
+          lieuId: Number(lieuId),
+          delta: -1,
+          type: 'SORTIE_FIDELITE',
+          utilisateurId,
+          notes: `Cadeau fidélité pour ${recompense.client.nomComplet}`,
+        });
+      }
+      return tx.recompenseFidelite.update({
+        where: { id },
+        data: { statut: 'UTILISEE', dateUtilisation: new Date() },
+      });
+    });
+    res.json(misAJour);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 }
 
 module.exports = { listerRecompenses, definirRecompense, marquerUtilisee };

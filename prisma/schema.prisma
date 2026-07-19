@@ -234,6 +234,7 @@ enum TypeMouvementStock {
   RETOUR_CLIENT
   TRANSFERT_SORTIE
   TRANSFERT_ENTREE
+  SORTIE_FIDELITE
 }
 
 model MouvementStock {
