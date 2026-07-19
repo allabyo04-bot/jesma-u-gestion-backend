@@ -4,24 +4,26 @@ const prisma = require('../lib/prisma');
 // GET /api/utilisateurs
 async function listerUtilisateurs(req, res) {
   const utilisateurs = await prisma.utilisateur.findMany({
-    include: { lieu: true },
+    include: { lieu: true, roleDynamique: true },
     orderBy: { nomComplet: 'asc' },
   });
   const sansPin = utilisateurs.map(({ pin, ...reste }) => reste);
   res.json(sansPin);
 }
 
-// POST /api/utilisateurs   { nomUtilisateur, pin, nomComplet, role, lieuId? }
+// POST /api/utilisateurs   { nomUtilisateur, pin, nomComplet, roleId, lieuId? }
 async function creerUtilisateur(req, res) {
-  const { nomUtilisateur, pin, nomComplet, role, lieuId } = req.body;
+  const { nomUtilisateur, pin, nomComplet, roleId, lieuId } = req.body;
 
-  if (!nomUtilisateur || !pin || !nomComplet || !role) {
+  if (!nomUtilisateur || !pin || !nomComplet || !roleId) {
     return res.status(400).json({ error: "Nom d'utilisateur, PIN, nom complet et rôle sont requis." });
   }
   if (!/^\d{4,6}$/.test(pin)) {
     return res.status(400).json({ error: 'Le PIN doit comporter entre 4 et 6 chiffres.' });
   }
-  if (!['ADMIN', 'CAISSIER'].includes(role)) {
+
+  const roleChoisi = await prisma.role.findUnique({ where: { id: Number(roleId) } });
+  if (!roleChoisi) {
     return res.status(400).json({ error: 'Rôle invalide.' });
   }
 
@@ -32,42 +34,55 @@ async function creerUtilisateur(req, res) {
 
   const pinHache = await bcrypt.hash(pin, 10);
 
+  // Le champ historique "role" (ADMIN/CAISSIER) reste rempli automatiquement à partir
+  // du rôle dynamique choisi, pour ne rien casser dans le reste de l'appli qui s'appuie
+  // encore dessus (bascule d'accès complet, badges, etc.).
   const utilisateur = await prisma.utilisateur.create({
     data: {
       nomUtilisateur,
       pin: pinHache,
       nomComplet,
-      role,
+      role: roleChoisi.estAdmin ? 'ADMIN' : 'CAISSIER',
+      roleId: roleChoisi.id,
       lieuId: lieuId ? Number(lieuId) : null,
     },
-    include: { lieu: true },
+    include: { lieu: true, roleDynamique: true },
   });
 
   const { pin: _omis, ...sansPin } = utilisateur;
   res.status(201).json(sansPin);
 }
 
-// PUT /api/utilisateurs/:id   { nomComplet?, role?, lieuId?, actif? }
+// PUT /api/utilisateurs/:id   { nomComplet?, roleId?, lieuId?, actif? }
 async function modifierUtilisateur(req, res) {
   const id = Number(req.params.id);
-  const { nomComplet, role, lieuId, actif } = req.body;
+  const { nomComplet, roleId, lieuId, actif } = req.body;
 
   const utilisateur = await prisma.utilisateur.findUnique({ where: { id } });
   if (!utilisateur) return res.status(404).json({ error: 'Utilisateur introuvable.' });
 
-  if (role && !['ADMIN', 'CAISSIER'].includes(role)) {
-    return res.status(400).json({ error: 'Rôle invalide.' });
+  let nouveauRoleTexte = utilisateur.role;
+  let nouveauRoleId = utilisateur.roleId;
+
+  if (roleId !== undefined) {
+    const roleChoisi = await prisma.role.findUnique({ where: { id: Number(roleId) } });
+    if (!roleChoisi) {
+      return res.status(400).json({ error: 'Rôle invalide.' });
+    }
+    nouveauRoleTexte = roleChoisi.estAdmin ? 'ADMIN' : 'CAISSIER';
+    nouveauRoleId = roleChoisi.id;
   }
 
   const misAJour = await prisma.utilisateur.update({
     where: { id },
     data: {
       nomComplet: nomComplet ?? utilisateur.nomComplet,
-      role: role ?? utilisateur.role,
+      role: nouveauRoleTexte,
+      roleId: nouveauRoleId,
       lieuId: lieuId !== undefined ? (lieuId ? Number(lieuId) : null) : utilisateur.lieuId,
       actif: actif !== undefined ? actif : utilisateur.actif,
     },
-    include: { lieu: true },
+    include: { lieu: true, roleDynamique: true },
   });
 
   const { pin: _omis, ...sansPin } = misAJour;
