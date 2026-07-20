@@ -48,19 +48,27 @@ async function modifierDenomination(req, res) {
 async function obtenirCarteCadeau(req, res) {
   const carte = await prisma.carteCadeau.findUnique({
     where: { codeBarre: req.params.codeBarre },
-    include: { cycles: { orderBy: { dateActivation: 'desc' } } },
+    include: { cycles: { include: { lieu: true }, orderBy: { dateActivation: 'desc' } } },
   });
   if (!carte) return res.status(404).json({ error: 'Carte cadeau introuvable.' });
   res.json(carte);
 }
 
-// POST /api/cartes-cadeaux/activer   { codeBarre, denomination }
+// POST /api/cartes-cadeaux/activer   { codeBarre, denomination, lieuId, modePaiement }
+// L'argent reçu à l'activation est désormais tracé (boutique + mode de paiement), pour
+// apparaître dans États comme un vrai encaissement — avant, il n'était nulle part suivi.
 async function activerCarteCadeau(req, res) {
-  const { codeBarre, denomination } = req.body;
+  const { codeBarre, denomination, lieuId, modePaiement } = req.body;
   const utilisateurId = req.user.id;
 
   if (!codeBarre || !denomination) {
     return res.status(400).json({ error: 'Code-barres et dénomination requis.' });
+  }
+  if (!lieuId) {
+    return res.status(400).json({ error: 'La boutique est requise.' });
+  }
+  if (!modePaiement) {
+    return res.status(400).json({ error: 'Le mode de paiement est requis.' });
   }
 
   const denominationValide = await prisma.denominationCarteCadeau.findUnique({
@@ -89,7 +97,13 @@ async function activerCarteCadeau(req, res) {
       }
 
       await tx.carteCadeauCycle.create({
-        data: { carteCadeauId: carte.id, denomination, utilisateurId },
+        data: {
+          carteCadeauId: carte.id,
+          denomination,
+          utilisateurId,
+          lieuId: Number(lieuId),
+          modePaiement,
+        },
       });
 
       return carte;

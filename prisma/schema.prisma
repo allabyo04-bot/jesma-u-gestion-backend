@@ -169,6 +169,7 @@ model Lieu {
   transfertsDestination TransfertStock[] @relation("LieuDestination")
   ventes                Vente[]
   utilisateurs          Utilisateur[]
+  carteCadeauCycles CarteCadeauCycle[]
   vendeurs              Vendeur[]
 }
 
@@ -500,6 +501,9 @@ model CarteCadeauCycle {
   dateUtilisation DateTime?
   utilisateurId  Int
   utilisateur    Utilisateur  @relation("ActivateurCycle", fields: [utilisateurId], references: [id])
+  lieuId         Int?
+  lieu           Lieu?        @relation(fields: [lieuId], references: [id])
+  modePaiement   String?
 }
 
 // ------------------------------------------------------------

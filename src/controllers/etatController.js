@@ -89,10 +89,14 @@ async function recapBoutique(req, res) {
   const depenses = await prisma.depense.findMany({
     where: construirePeriodeChamp('dateDepense', dateDebut, dateFin),
   });
+  const whereCyclesRecap = { ...construirePeriodeChamp('dateActivation', dateDebut, dateFin) };
+  if (lieuId) whereCyclesRecap.lieuId = Number(lieuId);
+  const cyclesCartesCadeaux = await prisma.carteCadeauCycle.findMany({ where: whereCyclesRecap });
 
   const totalVentes = ventes.reduce((s, v) => s + Number(v.totalNet), 0);
   const totalRemises = ventes.reduce((s, v) => s + Number(v.remiseMontant), 0);
   const totalDepenses = depenses.reduce((s, d) => s + Number(d.montant), 0);
+  const totalCartesCadeaux = cyclesCartesCadeaux.reduce((s, c) => s + Number(c.denomination), 0);
 
   res.json({
     periode: { dateDebut: dateDebut || null, dateFin: dateFin || null },
@@ -100,7 +104,8 @@ async function recapBoutique(req, res) {
     totalVentes,
     totalRemises,
     totalDepenses,
-    resultatNet: totalVentes - totalDepenses,
+    totalCartesCadeaux,
+    resultatNet: totalVentes + totalCartesCadeaux - totalDepenses,
   });
 }
 
@@ -170,9 +175,17 @@ async function parModePaiement(req, res) {
     where: { vente: whereVente },
   });
 
+  const whereCycles = { ...construirePeriodeChamp('dateActivation', periode.dateDebut, periode.dateFin) };
+  if (lieuId) whereCycles.lieuId = Number(lieuId);
+  const cyclesCartesCadeaux = await prisma.carteCadeauCycle.findMany({ where: whereCycles });
+
   const parMode = {};
   for (const p of paiements) {
     parMode[p.mode] = (parMode[p.mode] || 0) + Number(p.montant);
+  }
+  for (const c of cyclesCartesCadeaux) {
+    if (!c.modePaiement) continue; // anciens cycles créés avant ce suivi, sans mode connu
+    parMode[c.modePaiement] = (parMode[c.modePaiement] || 0) + Number(c.denomination);
   }
 
   const resultats = Object.entries(parMode)
@@ -229,6 +242,14 @@ async function fermetureCaisse(req, res) {
   const reglements = await prisma.reglementCredit.findMany({ where: whereReglements });
   for (const r of reglements) {
     parMode[r.mode] = (parMode[r.mode] || 0) + Number(r.montant);
+  }
+
+  const whereCyclesJour = { dateActivation: { gte: debut, lte: fin } };
+  if (lieuId) whereCyclesJour.lieuId = Number(lieuId);
+  const cyclesCartesCadeauxJour = await prisma.carteCadeauCycle.findMany({ where: whereCyclesJour });
+  for (const c of cyclesCartesCadeauxJour) {
+    if (!c.modePaiement) continue;
+    parMode[c.modePaiement] = (parMode[c.modePaiement] || 0) + Number(c.denomination);
   }
 
   const totalEncaisse = Object.values(parMode).reduce((s, m) => s + m, 0);
