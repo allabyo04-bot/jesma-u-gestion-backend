@@ -12,7 +12,7 @@ function genererNumeroVente() {
 
 async function mettreAJourFidelite(tx, clientId, totalNet) {
   const client = await tx.client.findUnique({ where: { id: clientId } });
-  if (!client) return;
+  if (!client || client.estComptoir) return;
 
   if (Number(totalNet) < SEUIL_FIDELITE_MONTANT) {
     await tx.client.update({
@@ -56,6 +56,17 @@ async function creerVente(req, res) {
   }
   if (!vendeurId) {
     return res.status(400).json({ error: 'Le vendeur est obligatoire.' });
+  }
+
+  // Une vente est toujours associée à un client, quitte à retomber sur "Client Comptoir"
+  // si le frontend n'en a envoyé aucun (garde-fou côté serveur, en plus de celui du front).
+  let clientIdFinal = clientId ? Number(clientId) : null;
+  if (!clientIdFinal) {
+    const comptoir = await prisma.client.findFirst({ where: { estComptoir: true } });
+    if (!comptoir) {
+      return res.status(400).json({ error: 'Aucun client sélectionné, et "Client Comptoir" n\'existe pas encore.' });
+    }
+    clientIdFinal = comptoir.id;
   }
 
   const listePaiements = Array.isArray(paiements) ? paiements : [];
@@ -120,7 +131,7 @@ async function creerVente(req, res) {
       const vente = await tx.vente.create({
         data: {
           numero: genererNumeroVente(),
-          clientId: clientId ? Number(clientId) : null,
+          clientId: clientIdFinal,
           vendeurId: vendeurId ? Number(vendeurId) : null,
           lieuId: Number(lieuId),
           utilisateurId,
@@ -196,9 +207,7 @@ async function creerVente(req, res) {
         });
       }
 
-      if (clientId) {
-        await mettreAJourFidelite(tx, Number(clientId), totalNet);
-      }
+      await mettreAJourFidelite(tx, clientIdFinal, totalNet);
 
       return vente;
     }, { maxWait: 10000, timeout: 20000 });

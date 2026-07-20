@@ -274,6 +274,7 @@ model Client {
   telephone     String?  @unique
   email         String?
   pointsFidelite Int     @default(0)
+  estComptoir   Boolean  @default(false)
 
   achatsConsecutifs       Int     @default(0)
   montantCumuleConsecutif Decimal @default(0)
