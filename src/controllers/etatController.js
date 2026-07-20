@@ -220,11 +220,6 @@ async function fermetureCaisse(req, res) {
 
   const totalEncaisse = Object.values(parMode).reduce((s, m) => s + m, 0);
 
-  const depenses = await prisma.depense.findMany({
-    where: construirePeriodeChamp('dateDepense', date, date),
-  });
-  const totalDepenses = depenses.reduce((s, d) => s + Number(d.montant), 0);
-
   const avoirsEmis = await prisma.avoir.findMany({ where: { createdAt: { gte: debut, lte: fin } } });
   const avoirsUtilises = await prisma.avoir.findMany({ where: { dateUtilisation: { gte: debut, lte: fin } } });
 
@@ -233,8 +228,6 @@ async function fermetureCaisse(req, res) {
     nombreVentes: ventes.length,
     parModePaiement: Object.entries(parMode).map(([mode, montant]) => ({ mode, montant })),
     totalEncaisse,
-    totalDepenses,
-    resultatNet: totalEncaisse - totalDepenses,
     avoirsEmis: { nombre: avoirsEmis.length, montant: avoirsEmis.reduce((s, a) => s + Number(a.montant), 0) },
     avoirsUtilises: { nombre: avoirsUtilises.length, montant: avoirsUtilises.reduce((s, a) => s + Number(a.montant), 0) },
   });
@@ -276,8 +269,75 @@ async function exporterMargeCsv(req, res) {
   res.send('\uFEFF' + lignesCsv.join('\n'));
 }
 
+// GET /api/etats/ventes/export.csv?dateDebut=&dateFin=&lieuId=
+async function exporterVentesCsv(req, res) {
+  const { dateDebut, dateFin, lieuId } = req.query;
+  const where = { statut: 'VALIDEE', ...construirePeriode(dateDebut, dateFin) };
+  if (lieuId) where.lieuId = Number(lieuId);
+
+  const ventes = await prisma.vente.findMany({
+    where,
+    include: { client: true, vendeur: true, lieu: true, paiements: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const lignesCsv = ['Date;Numéro;Boutique;Vendeur;Client;Type;Total HT;Remise;Total net;Modes de paiement'];
+  for (const v of ventes) {
+    const dateTexte = new Date(v.createdAt).toLocaleDateString('fr-FR');
+    const modes = v.paiements.map((p) => p.mode).join(', ');
+    lignesCsv.push(
+      [
+        dateTexte,
+        v.numero,
+        v.lieu?.nom || '',
+        v.vendeur?.nomComplet || '',
+        v.client?.nomComplet || '',
+        v.typeVente === 'CREDIT' ? 'Crédit' : 'Comptant',
+        Number(v.totalHT).toFixed(2),
+        Number(v.remiseMontant).toFixed(2),
+        Number(v.totalNet).toFixed(2),
+        modes,
+      ].join(';')
+    );
+  }
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="ventes.csv"');
+  res.send('\uFEFF' + lignesCsv.join('\n'));
+}
+
+// GET /api/etats/depenses/export.csv?dateDebut=&dateFin=
+async function exporterDepensesCsv(req, res) {
+  const { dateDebut, dateFin } = req.query;
+
+  const depenses = await prisma.depense.findMany({
+    where: construirePeriodeChamp('dateDepense', dateDebut, dateFin),
+    include: { categorie: true, utilisateur: true },
+    orderBy: { dateDepense: 'asc' },
+  });
+
+  const lignesCsv = ['Date;Catégorie;Montant;Description;Saisie par'];
+  for (const d of depenses) {
+    const dateTexte = new Date(d.dateDepense).toLocaleDateString('fr-FR');
+    lignesCsv.push(
+      [
+        dateTexte,
+        d.categorie?.nom || '',
+        Number(d.montant).toFixed(2),
+        (d.description || '').replace(/;/g, ','),
+        d.utilisateur?.nomComplet || '',
+      ].join(';')
+    );
+  }
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="depenses.csv"');
+  res.send('\uFEFF' + lignesCsv.join('\n'));
+}
+
 module.exports = {
   margeParProduit, recapBoutique, meilleurVendeur,
   parDate, parModePaiement, parType, fermetureCaisse,
-  exporterMargeCsv,
+  exporterMargeCsv, exporterVentesCsv, exporterDepensesCsv,
 };
+
