@@ -31,6 +31,14 @@ function construirePeriodeChamp(champ, dateDebut, dateFin) {
   return where;
 }
 
+// Un caissier (non-ADMIN) ne peut consulter que la journée en cours dans États, quels
+// que soient les paramètres envoyés — imposé ici côté serveur, pas juste caché à l'écran.
+function restreindreAJourdhui(req, dateDebut, dateFin) {
+  if (req.user.role === 'ADMIN') return { dateDebut, dateFin };
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+  return { dateDebut: aujourdhui, dateFin: aujourdhui };
+}
+
 // GET /api/etats/marge-produits?dateDebut=&dateFin=
 async function margeParProduit(req, res) {
   const { dateDebut, dateFin } = req.query;
@@ -98,9 +106,10 @@ async function recapBoutique(req, res) {
 
 // GET /api/etats/meilleur-vendeur?dateDebut=&dateFin=&lieuId=
 async function meilleurVendeur(req, res) {
-  const { dateDebut, dateFin, lieuId } = req.query;
+  const { dateDebut, dateFin: dateFinBrute, lieuId } = req.query;
+  const periode = restreindreAJourdhui(req, dateDebut, dateFinBrute);
 
-  const where = { statut: 'VALIDEE', vendeurId: { not: null }, ...construirePeriode(dateDebut, dateFin) };
+  const where = { statut: 'VALIDEE', vendeurId: { not: null }, ...construirePeriode(periode.dateDebut, periode.dateFin) };
   if (lieuId) where.lieuId = Number(lieuId);
 
   const ventes = await prisma.vente.findMany({
@@ -125,13 +134,14 @@ async function meilleurVendeur(req, res) {
 
   const resultats = Object.values(parVendeur).sort((a, b) => b.nombreVentes - a.nombreVentes);
 
-  res.json({ periode: { dateDebut: dateDebut || null, dateFin: dateFin || null }, resultats });
+  res.json({ periode, resultats });
 }
 
 // GET /api/etats/par-date?dateDebut=&dateFin=&lieuId=
 async function parDate(req, res) {
-  const { dateDebut, dateFin, lieuId } = req.query;
-  const where = { statut: 'VALIDEE', ...construirePeriode(dateDebut, dateFin) };
+  const { dateDebut, dateFin: dateFinBrute, lieuId } = req.query;
+  const periode = restreindreAJourdhui(req, dateDebut, dateFinBrute);
+  const where = { statut: 'VALIDEE', ...construirePeriode(periode.dateDebut, periode.dateFin) };
   if (lieuId) where.lieuId = Number(lieuId);
 
   const ventes = await prisma.vente.findMany({
@@ -142,7 +152,7 @@ async function parDate(req, res) {
   const total = ventes.reduce((s, v) => s + Number(v.totalNet), 0);
 
   res.json({
-    periode: { dateDebut: dateDebut || null, dateFin: dateFin || null },
+    periode,
     nombreVentes: ventes.length,
     total,
     ventes,
@@ -151,8 +161,9 @@ async function parDate(req, res) {
 
 // GET /api/etats/par-mode-paiement?dateDebut=&dateFin=&lieuId=
 async function parModePaiement(req, res) {
-  const { dateDebut, dateFin, lieuId } = req.query;
-  const whereVente = { statut: 'VALIDEE', ...construirePeriode(dateDebut, dateFin) };
+  const { dateDebut, dateFin: dateFinBrute, lieuId } = req.query;
+  const periode = restreindreAJourdhui(req, dateDebut, dateFinBrute);
+  const whereVente = { statut: 'VALIDEE', ...construirePeriode(periode.dateDebut, periode.dateFin) };
   if (lieuId) whereVente.lieuId = Number(lieuId);
 
   const paiements = await prisma.paiementVente.findMany({
@@ -169,13 +180,14 @@ async function parModePaiement(req, res) {
     .sort((a, b) => b.montant - a.montant);
   const total = resultats.reduce((s, r) => s + r.montant, 0);
 
-  res.json({ periode: { dateDebut: dateDebut || null, dateFin: dateFin || null }, total, resultats });
+  res.json({ periode, total, resultats });
 }
 
 // GET /api/etats/par-type?dateDebut=&dateFin=&lieuId=
 async function parType(req, res) {
-  const { dateDebut, dateFin, lieuId } = req.query;
-  const where = { statut: 'VALIDEE', ...construirePeriode(dateDebut, dateFin) };
+  const { dateDebut, dateFin: dateFinBrute, lieuId } = req.query;
+  const periode = restreindreAJourdhui(req, dateDebut, dateFinBrute);
+  const where = { statut: 'VALIDEE', ...construirePeriode(periode.dateDebut, periode.dateFin) };
   if (lieuId) where.lieuId = Number(lieuId);
 
   const ventes = await prisma.vente.findMany({ where });
@@ -184,7 +196,7 @@ async function parType(req, res) {
   const somme = (arr) => arr.reduce((s, v) => s + Number(v.totalNet), 0);
 
   res.json({
-    periode: { dateDebut: dateDebut || null, dateFin: dateFin || null },
+    periode,
     comptant: { nombre: comptant.length, total: somme(comptant) },
     credit: { nombre: credit.length, total: somme(credit) },
   });
@@ -195,7 +207,8 @@ async function parType(req, res) {
 // dépenses du jour, résultat net, et mouvement des avoirs (émis / utilisés) — sans retour d'espèces.
 async function fermetureCaisse(req, res) {
   const { date, lieuId } = req.query;
-  const jour = date ? new Date(date) : new Date();
+  const dateEffective = req.user.role === 'ADMIN' ? date : null;
+  const jour = dateEffective ? new Date(dateEffective) : new Date();
   const debut = debutJournee(jour);
   const fin = finJournee(jour);
 

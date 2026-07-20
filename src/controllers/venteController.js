@@ -352,12 +352,23 @@ async function annulerVente(req, res) {
 }
 
 // GET /api/ventes?statut=&lieuId=&clientId=
+// Un caissier (non-ADMIN) ne voit jamais que les ventes du jour en cours, quels que
+// soient les paramètres envoyés — c'est imposé ici côté serveur, pas juste caché
+// côté écran, pour qu'il n'y ait aucun moyen de contourner cette limite.
 async function listerVentes(req, res) {
   const { statut, lieuId, clientId } = req.query;
   const where = {};
   if (statut) where.statut = statut;
   if (lieuId) where.lieuId = Number(lieuId);
   if (clientId) where.clientId = Number(clientId);
+
+  if (req.user.role !== 'ADMIN') {
+    const debut = new Date();
+    debut.setHours(0, 0, 0, 0);
+    const fin = new Date();
+    fin.setHours(23, 59, 59, 999);
+    where.createdAt = { gte: debut, lte: fin };
+  }
 
   const ventes = await prisma.vente.findMany({
     where,
