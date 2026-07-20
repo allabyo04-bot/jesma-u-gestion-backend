@@ -64,6 +64,7 @@ model Utilisateur {
   createdAt     DateTime        @default(now())
 
   ventes            Vente[]
+  journalActivite JournalActivite[]
   depenses          Depense[]
   mouvementsStock   MouvementStock[]
   demandesRemise    DemandeRemise[] @relation("DemandeurRemise")
@@ -73,6 +74,14 @@ model Utilisateur {
   reglementsCredit  ReglementCredit[]
   avoirsCrees       Avoir[]
   demandesAnnulation Vente[]    @relation("DemandeurAnnulationVente")
+}
+model JournalActivite {
+  id            Int         @id @default(autoincrement())
+  type          String      // 'ANNULATION_VENTE' | 'REMISE_APPROUVEE' | 'REMISE_REFUSEE' | 'MODIFICATION_PRIX_ARTICLE'
+  description   String
+  utilisateurId Int
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
+  createdAt     DateTime    @default(now())
 }
 
 // ------------------------------------------------------------

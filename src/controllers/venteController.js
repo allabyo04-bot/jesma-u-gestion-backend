@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { appliquerMouvementStock } = require('../lib/stock');
+const { enregistrerActivite } = require('../lib/journal');
 
 const SEUIL_FIDELITE_MONTANT = 20000;
 const SEUIL_FIDELITE_ACHATS = 10;
@@ -314,6 +315,12 @@ async function annulerVente(req, res) {
           data: { statut: 'ACTIF', dateUtilisation: null },
         });
       }
+
+      await enregistrerActivite(tx, {
+        type: 'ANNULATION_VENTE',
+        description: `Vente ${vente.numero} annulée (${Number(vente.totalNet).toLocaleString('fr-FR')} F)${motif ? ' — motif : ' + motif : ''}`,
+        utilisateurId,
+      });
 
       return tx.vente.update({
         where: { id },

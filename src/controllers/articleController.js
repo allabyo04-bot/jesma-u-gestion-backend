@@ -2,6 +2,7 @@ const cloudinary = require('../../config/cloudinary');
 const prisma = require('../lib/prisma');
 const { genererCodeBarreInterne } = require('../utils/barcode');
 const { genererSvgEAN13 } = require('../utils/ean13');
+const { enregistrerActivite } = require('../lib/journal');
 
 // GET /api/articles?familleId=&sousFamilleId=&enStock=true
 async function listerArticles(req, res) {
@@ -120,18 +121,42 @@ async function modifierArticle(req, res) {
     return res.status(400).json({ error: 'Désignation, famille, sous-famille et prix de vente sont requis.' });
   }
 
+  const nouveauPrixAchat = prixAchat !== undefined ? prixAchat : article.prixAchat;
+
   const misAJour = await prisma.article.update({
     where: { id },
     data: {
       designation,
       familleId: Number(familleId),
       sousFamilleId: Number(sousFamilleId),
-      prixAchat: prixAchat !== undefined ? prixAchat : article.prixAchat,
+      prixAchat: nouveauPrixAchat,
       prixVente,
       seuilAlerte: seuilAlerte ?? article.seuilAlerte,
       actif: actif !== undefined ? actif : article.actif,
     },
   });
+
+  // Journal : uniquement si un des deux prix a réellement changé, pour ne pas polluer
+  // le journal avec des modifications qui ne touchent ni prix d'achat ni prix de vente.
+  const prixAchatAvant = Number(article.prixAchat);
+  const prixVenteAvant = Number(article.prixVente);
+  const prixAchatApres = Number(misAJour.prixAchat);
+  const prixVenteApres = Number(misAJour.prixVente);
+
+  if (prixAchatAvant !== prixAchatApres || prixVenteAvant !== prixVenteApres) {
+    const parties = [];
+    if (prixAchatAvant !== prixAchatApres) {
+      parties.push(`prix d'achat ${prixAchatAvant.toLocaleString('fr-FR')} F → ${prixAchatApres.toLocaleString('fr-FR')} F`);
+    }
+    if (prixVenteAvant !== prixVenteApres) {
+      parties.push(`prix de vente ${prixVenteAvant.toLocaleString('fr-FR')} F → ${prixVenteApres.toLocaleString('fr-FR')} F`);
+    }
+    await enregistrerActivite(prisma, {
+      type: 'MODIFICATION_PRIX_ARTICLE',
+      description: `${article.designation} (${article.reference}) — ${parties.join(', ')}`,
+      utilisateurId: req.user.id,
+    });
+  }
 
   res.json(misAJour);
 }
