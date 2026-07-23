@@ -369,9 +369,41 @@ async function exporterDepensesCsv(req, res) {
   res.send('\uFEFF' + lignesCsv.join('\n'));
 }
 
+// GET /api/etats/peremption-proche?jours=60
+// Liste les lots reçus (LigneReception) dont la date de péremption est renseignée et
+// approche (ou déjà dépassée), triés du plus urgent au moins urgent. "jours" définit
+// la fenêtre d'alerte (60 jours par défaut).
+async function produitsPeremptionProche(req, res) {
+  const jours = req.query.jours ? Number(req.query.jours) : 60;
+  const limite = new Date();
+  limite.setDate(limite.getDate() + jours);
+
+  const lignes = await prisma.ligneReception.findMany({
+    where: { datePeremption: { not: null, lte: limite } },
+    include: { article: true, reception: { include: { lieu: true } } },
+    orderBy: { datePeremption: 'asc' },
+  });
+
+  const maintenant = new Date();
+  const resultats = lignes.map((l) => ({
+    ligneReceptionId: l.id,
+    articleId: l.articleId,
+    designation: l.article.designation,
+    reference: l.article.reference,
+    quantite: l.quantite,
+    datePeremption: l.datePeremption,
+    lieu: l.reception.lieu?.nom || null,
+    joursRestants: Math.ceil((new Date(l.datePeremption) - maintenant) / (1000 * 60 * 60 * 24)),
+    expire: new Date(l.datePeremption) < maintenant,
+  }));
+
+  res.json({ jours, resultats });
+}
+
 module.exports = {
   margeParProduit, recapBoutique, meilleurVendeur,
   parDate, parModePaiement, parType, fermetureCaisse,
   exporterMargeCsv, exporterVentesCsv, exporterDepensesCsv,
+  produitsPeremptionProche,
 };
 

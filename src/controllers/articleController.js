@@ -41,13 +41,22 @@ async function rechercherArticle(req, res) {
   if (!article) {
     article = await prisma.article.findFirst({ where: { codeInterne: q, actif: true } });
   }
+  if (!article) {
+    article = await prisma.article.findFirst({ where: { reference: { equals: q, mode: 'insensitive' }, actif: true } });
+  }
   if (article) {
     const [resultat] = await ajouterStockLieu([article]);
     return res.json({ mode: 'exact', resultats: [resultat] });
   }
 
   const resultats = await prisma.article.findMany({
-    where: { actif: true, designation: { contains: q, mode: 'insensitive' } },
+    where: {
+      actif: true,
+      OR: [
+        { designation: { contains: q, mode: 'insensitive' } },
+        { reference: { contains: q, mode: 'insensitive' } },
+      ],
+    },
     take: 20,
     orderBy: { designation: 'asc' },
   });
@@ -182,29 +191,57 @@ async function genererCodeBarre(req, res) {
 // GET /api/articles/a-imprimer
 async function listerCodesAImprimer(req, res) {
   const articles = await prisma.article.findMany({
-    where: { codeBarreGenere: true, actif: true },
+    where: { quantiteAImprimer: { gt: 0 }, actif: true },
     orderBy: { designation: 'asc' },
   });
   res.json(articles);
 }
 
-// GET /api/articles/a-imprimer/etiquettes
+// POST /api/articles/a-imprimer/etiquettes   { lignes: [{ articleId, quantite }] }
+// Imprime les étiquettes demandées pour les articles listés — que ce soit depuis la
+// file d'attente (nouveautés reçues) ou pour n'importe quel article choisi à la
+// demande (réimpression). Remet quantiteAImprimer à 0 pour les articles concernés.
 async function imprimerEtiquettes(req, res) {
-  const articles = await prisma.article.findMany({
-    where: { codeBarreGenere: true, actif: true },
-    orderBy: { designation: 'asc' },
+  const { lignes } = req.body;
+  if (!Array.isArray(lignes) || lignes.length === 0) {
+    return res.status(400).json({ error: 'Aucune étiquette à imprimer.' });
+  }
+
+  const ids = lignes.map((l) => Number(l.articleId));
+  const articles = await prisma.article.findMany({ where: { id: { in: ids } } });
+  const parId = Object.fromEntries(articles.map((a) => [a.id, a]));
+
+  const blocsEtiquettes = [];
+  for (const ligne of lignes) {
+    const article = parId[Number(ligne.articleId)];
+    if (!article) continue;
+    const quantite = Math.max(1, Number(ligne.quantite) || 1);
+    for (let i = 0; i < quantite; i++) {
+      blocsEtiquettes.push(`
+        <div class="etiquette">
+          <div class="marque">Jesma U</div>
+          <div class="designation">${article.designation}</div>
+          <div class="prix">${Number(article.prixVente).toLocaleString('fr-FR')} F</div>
+          ${article.codeBarre ? genererSvgEAN13(article.codeBarre) : ''}
+          ${article.codeBarre ? `<div class="code">${article.codeBarre}</div>` : ''}
+          <div class="reference">${article.reference}</div>
+        </div>
+      `);
+    }
+  }
+
+  await prisma.article.updateMany({
+    where: { id: { in: ids } },
+    data: { quantiteAImprimer: 0 },
   });
 
-  const etiquettes = articles.map((a) => `
-    <div class="etiquette">
-      <div class="designation">${a.designation}</div>
-      <div class="prix">${Number(a.prixVente).toLocaleString('fr-FR')} F</div>
-      ${genererSvgEAN13(a.codeBarre)}
-      <div class="code">${a.codeBarre}</div>
-    </div>
-  `).join('\n');
+  const html = construireHtmlEtiquettes(blocsEtiquettes.join('\n'));
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+}
 
-  const html = `<!DOCTYPE html>
+function construireHtmlEtiquettes(contenu) {
+  return `<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
@@ -216,22 +253,21 @@ async function imprimerEtiquettes(req, res) {
     width: 220px; border: 1px dashed #999; padding: 8px; text-align: center;
     page-break-inside: avoid;
   }
+  .marque { font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7; margin-bottom: 2px; }
   .designation { font-size: 12px; font-weight: bold; margin-bottom: 4px; }
   .prix { font-size: 13px; margin-bottom: 4px; }
   .code { font-size: 11px; letter-spacing: 1px; margin-top: 2px; }
+  .reference { font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 3px; font-family: 'Courier New', monospace; }
   @media print {
     .etiquette { border: 1px solid #000; }
   }
 </style>
 </head>
 <body>
-  <div class="grille">${etiquettes || '<p>Aucune étiquette en attente.</p>'}</div>
+  <div class="grille">${contenu || '<p>Aucune étiquette en attente.</p>'}</div>
   <script>window.onload = () => window.print();</script>
 </body>
 </html>`;
-
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(html);
 }
 
 // POST /api/articles/:id/photo

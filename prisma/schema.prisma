@@ -134,6 +134,10 @@ model Article {
   prixVente       Decimal
   stockActuel     Int          @default(0)
   seuilAlerte     Int          @default(5)
+  // Nombre d'étiquettes restant à imprimer pour cet article (mis à jour à chaque
+  // réception, remis à 0 une fois les étiquettes imprimées). Permet aussi de
+  // réimprimer une étiquette pour n'importe quel article, à la demande.
+  quantiteAImprimer Int        @default(0)
   actif           Boolean      @default(true)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
@@ -205,6 +209,9 @@ model LigneReception {
   article       Article   @relation(fields: [articleId], references: [id])
   quantite      Int
   prixAchat     Decimal
+  // Renseignée uniquement pour les articles périssables (ex: famille Cosmétique) —
+  // optionnelle pour tout le reste.
+  datePeremption DateTime?
 }
 
 enum StatutTransfert {
