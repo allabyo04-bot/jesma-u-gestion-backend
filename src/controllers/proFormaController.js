@@ -111,30 +111,52 @@ async function imprimerProForma(req, res) {
 <meta charset="UTF-8">
 <title>Facture pro forma ${proForma.numero}</title>
 <style>
-  body { font-family: Arial, sans-serif; margin: 24px; color: #2E1A0D; }
-  h1 { font-size: 20px; margin-bottom: 4px; }
-  .sous-titre { color: #7A5C3E; margin-top: 0; }
-  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; margin: 0; color: #2E1A0D; background: #FBF3DD; }
+  .cadre { margin: 14mm; border: 1px solid #D9A144; border-radius: 10px; padding: 14mm; min-height: 260mm; }
+  .entete { display: flex; align-items: center; gap: 16px; padding-bottom: 16px; border-bottom: 2px solid #D9A144; margin-bottom: 20px; }
+  .logo { height: 56px; }
+  .entete h1 { font-size: 20px; margin: 0; }
+  .coordonnees { font-size: 11px; color: #7A5C3E; margin-top: 2px; }
+  .infos-facture { display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
   th, td { padding: 8px; border-bottom: 1px solid #E5D9C3; font-size: 13px; }
   th { text-align: left; background: #F7EFDD; }
-  .total { text-align: right; font-size: 16px; font-weight: bold; margin-top: 12px; }
-  .mention { margin-top: 24px; padding: 12px; background: #FFF3D6; border-radius: 8px; font-size: 12px; color: #8A6300; }
+  .total { text-align: right; font-size: 17px; font-weight: bold; margin-top: 14px; }
+  .mention { margin-top: 28px; padding: 12px 14px; background: #FFF3D6; border-radius: 8px; font-size: 11px; color: #8A6300; }
+  .pied { margin-top: 40px; text-align: center; font-size: 10px; color: #A88968; }
 </style>
 </head>
 <body>
-  <h1>Jesma U — Facture pro forma</h1>
-  <p class="sous-titre">N° ${proForma.numero} — ${new Date(proForma.createdAt).toLocaleDateString('fr-FR')}</p>
-  <p><strong>Client :</strong> ${proForma.client.nomComplet}${proForma.client.telephone ? ' — ' + proForma.client.telephone : ''}</p>
-  <table>
-    <thead>
-      <tr><th>Article</th><th>Qté</th><th>PU</th><th>Total</th></tr>
-    </thead>
-    <tbody>${lignesHtml}</tbody>
-  </table>
-  <div class="total">Total : ${Number(proForma.totalHT).toLocaleString('fr-FR')} F</div>
-  <div class="mention">
-    Cette facture pro forma est valable dans la limite du stock disponible au moment de l'achat.
-    Elle ne constitue pas une facture définitive et peut être présentée en boutique pour finaliser l'achat.
+  <div class="cadre">
+    <div class="entete">
+      <img class="logo" src="https://jesma-u-gestion-frontend-production.up.railway.app/logo-jesma-u.png" alt="Jesma U" />
+      <div>
+        <h1>Jesma U — Facture pro forma</h1>
+        <div class="coordonnees">Grand-Bassam, carrefour rosier 5 — WhatsApp +225 07 69 535 786</div>
+      </div>
+    </div>
+
+    <div class="infos-facture">
+      <div><strong>N° :</strong> ${proForma.numero}<br><strong>Date :</strong> ${new Date(proForma.createdAt).toLocaleDateString('fr-FR')}</div>
+      <div style="text-align:right"><strong>Client :</strong> ${proForma.client.nomComplet}${proForma.client.telephone ? '<br>' + proForma.client.telephone : ''}</div>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>Article</th><th style="text-align:center">Qté</th><th style="text-align:right">PU</th><th style="text-align:right">Total</th></tr>
+      </thead>
+      <tbody>${lignesHtml}</tbody>
+    </table>
+    <div class="total">Total : ${Number(proForma.totalHT).toLocaleString('fr-FR')} F</div>
+
+    <div class="mention">
+      Cette facture pro forma est valable dans la limite du stock disponible au moment de l'achat.
+      Elle ne constitue pas une facture définitive et peut être présentée en boutique pour finaliser l'achat.
+    </div>
+
+    <div class="pied">Gestion Commerciale et CRM by Phil</div>
   </div>
   <script>window.onload = () => window.print();</script>
 </body>
