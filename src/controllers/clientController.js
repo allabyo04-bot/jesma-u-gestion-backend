@@ -10,13 +10,14 @@ async function listerClients(req, res) {
   res.json(clients);
 }
 
-// POST /api/clients   { nomComplet, telephone?, email? }
+// POST /api/clients   { nomComplet, telephone, email? }
 async function creerClient(req, res) {
   const { nomComplet, telephone, email } = req.body;
   if (!nomComplet) return res.status(400).json({ error: 'Nom complet requis.' });
+  if (!telephone || !telephone.trim()) return res.status(400).json({ error: 'Le téléphone est requis.' });
 
   const client = await prisma.client.create({
-    data: { nomComplet, telephone: telephone || null, email: email || null },
+    data: { nomComplet, telephone: telephone.trim(), email: email || null },
   });
   res.status(201).json(client);
 }
@@ -46,11 +47,15 @@ async function modifierClient(req, res) {
   const client = await prisma.client.findUnique({ where: { id } });
   if (!client) return res.status(404).json({ error: 'Client introuvable.' });
 
+  if (telephone !== undefined && !telephone.trim()) {
+    return res.status(400).json({ error: 'Le téléphone est requis.' });
+  }
+
   const misAJour = await prisma.client.update({
     where: { id },
     data: {
       nomComplet: nomComplet ?? client.nomComplet,
-      telephone: telephone !== undefined ? (telephone || null) : client.telephone,
+      telephone: telephone !== undefined ? telephone.trim() : client.telephone,
       email: email !== undefined ? (email || null) : client.email,
     },
   });
