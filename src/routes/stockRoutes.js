@@ -6,6 +6,7 @@ const { listerLieux, creerLieu, modifierLieu, stockParLieu } = require('../contr
 const { creerReception, listerReceptions } = require('../controllers/receptionController');
 const { creerTransfert, listerTransferts } = require('../controllers/transfertController');
 const { previsualiserImport, confirmerImport } = require('../controllers/importStockController');
+const { exporterFeuilleComptage, previsualiserInventaire, confirmerInventaire } = require('../controllers/inventaireController');
 const { listerMouvements } = require('../controllers/mouvementController');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
@@ -20,5 +21,8 @@ router.post('/transferts', requireAuth, requireRole('ADMIN'), creerTransfert);
 router.get('/mouvements', requireAuth, listerMouvements);
 router.post('/import/previsualiser', requireAuth, requireRole('ADMIN'), upload.single('fichier'), previsualiserImport);
 router.post('/import/confirmer', requireAuth, requireRole('ADMIN'), confirmerImport);
+router.get('/inventaire/export', requireAuth, exporterFeuilleComptage);
+router.post('/inventaire/apercu', requireAuth, upload.single('fichier'), previsualiserInventaire);
+router.post('/inventaire/confirmer', requireAuth, requireRole('ADMIN'), confirmerInventaire);
 
 module.exports = router;
