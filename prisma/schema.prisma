@@ -74,6 +74,7 @@ model Utilisateur {
   reglementsCredit  ReglementCredit[]
   avoirsCrees       Avoir[]
   demandesAnnulation Vente[]    @relation("DemandeurAnnulationVente")
+  facturesProFormaCreees FactureProForma[]
 }
 model JournalActivite {
   id            Int         @id @default(autoincrement())
@@ -149,6 +150,7 @@ model Article {
   stocksEmplacement  StockEmplacement[]
   lignesTransfert    LigneTransfertStock[]
   lignesAvoirRetour  LigneAvoirRetour[]
+  lignesFactureProForma LigneFactureProForma[]
 }
 
 // ------------------------------------------------------------
@@ -292,6 +294,7 @@ model Client {
   ventes        Vente[]
   listesCadeau  ListeCadeau[]
   recompensesFidelite RecompenseFidelite[]
+  facturesProForma FactureProForma[]
 }
 
 enum TypeRecompenseFidelite {
@@ -387,6 +390,7 @@ model Vente {
   paiements      PaiementVente[]
   reglements     ReglementCredit[]
   avoirsOrigine  Avoir[]      @relation("VenteOrigineAvoir")
+  factureProFormaOrigine FactureProForma?
 }
 
 model LigneVente {
@@ -619,4 +623,43 @@ model PaiementVente {
   mode      String
   montant   Decimal
   createdAt DateTime @default(now())
+}
+
+// ------------------------------------------------------------
+// FACTURES PRO FORMA
+// Un devis adressé à un client, valable dans la limite du stock disponible au moment
+// de la conversion en vente. Peut être récupérée plus tard pour créer directement la
+// vente correspondante, sans ressaisir les articles.
+// ------------------------------------------------------------
+
+enum StatutProForma {
+  EN_ATTENTE
+  UTILISEE
+  ANNULEE
+}
+
+model FactureProForma {
+  id            Int             @id @default(autoincrement())
+  numero        String          @unique
+  clientId      Int
+  client        Client          @relation(fields: [clientId], references: [id])
+  utilisateurId Int
+  utilisateur   Utilisateur     @relation(fields: [utilisateurId], references: [id])
+  totalHT       Decimal
+  statut        StatutProForma  @default(EN_ATTENTE)
+  venteIssueId  Int?            @unique
+  venteIssue    Vente?          @relation(fields: [venteIssueId], references: [id])
+  createdAt     DateTime        @default(now())
+
+  lignes        LigneFactureProForma[]
+}
+
+model LigneFactureProForma {
+  id                Int             @id @default(autoincrement())
+  factureProFormaId Int
+  factureProForma   FactureProForma @relation(fields: [factureProFormaId], references: [id])
+  articleId         Int
+  article           Article         @relation(fields: [articleId], references: [id])
+  quantite          Int
+  prixUnitaire      Decimal
 }

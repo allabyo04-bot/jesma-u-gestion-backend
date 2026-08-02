@@ -45,7 +45,7 @@ async function mettreAJourFidelite(tx, clientId, totalNet) {
 async function creerVente(req, res) {
   const {
     clientId, vendeurId, lieuId, remiseMontant, motifRemise,
-    carteCadeauCode, avoirCode, typeVente, lignes, paiements,
+    carteCadeauCode, avoirCode, proFormaId, typeVente, lignes, paiements,
   } = req.body;
   const utilisateurId = req.user.id;
 
@@ -187,6 +187,16 @@ async function creerVente(req, res) {
             data: { dateUtilisation: new Date() },
           });
         }
+      }
+
+      if (proFormaId) {
+        const proForma = await tx.factureProForma.findUnique({ where: { id: Number(proFormaId) } });
+        if (!proForma) throw new Error('Facture pro forma introuvable.');
+        if (proForma.statut !== 'EN_ATTENTE') throw new Error('Cette facture pro forma a déjà été utilisée ou annulée.');
+        await tx.factureProForma.update({
+          where: { id: proForma.id },
+          data: { statut: 'UTILISEE', venteIssueId: vente.id },
+        });
       }
 
       if (avoir) {
