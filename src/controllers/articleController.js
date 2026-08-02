@@ -300,6 +300,26 @@ async function uploaderPhoto(req, res) {
   }
 }
 
+// PUT /api/articles/deplacer-groupe   { articleIds: [1,2,3], sousFamilleId }
+// Déplace plusieurs articles d'un coup vers une autre sous-famille (et sa famille,
+// automatiquement) — pour corriger un mauvais classement sans rouvrir chaque article.
+async function deplacerGroupe(req, res) {
+  const { articleIds, sousFamilleId } = req.body;
+  if (!Array.isArray(articleIds) || articleIds.length === 0 || !sousFamilleId) {
+    return res.status(400).json({ error: 'articleIds (au moins un) et sousFamilleId sont requis.' });
+  }
+
+  const sousFamille = await prisma.sousFamille.findUnique({ where: { id: Number(sousFamilleId) } });
+  if (!sousFamille) return res.status(404).json({ error: 'Sous-famille introuvable.' });
+
+  const resultat = await prisma.article.updateMany({
+    where: { id: { in: articleIds.map(Number) } },
+    data: { sousFamilleId: sousFamille.id, familleId: sousFamille.familleId },
+  });
+
+  res.json({ deplaces: resultat.count });
+}
+
 module.exports = {
   listerArticles,
   rechercherArticle,
@@ -309,4 +329,5 @@ module.exports = {
   listerCodesAImprimer,
   imprimerEtiquettes,
   uploaderPhoto,
+  deplacerGroupe,
 };
