@@ -89,7 +89,7 @@ async function consulterListePublique(req, res) {
 // Dans tous les cas, la quantité est réservée (quantiteOfferte incrémentée) immédiatement,
 // pour éviter qu'un autre proche choisisse le même article entre-temps — même si la
 // confirmation du paiement web est encore en attente.
-async function offrirSurListe({ codeAcces, carteCadeauCode, modePaiement, montant, offrePar, canal, lignesChoisies }) {
+async function offrirSurListe({ codeAcces, carteCadeauCode, modePaiement, montant, offrePar, telephoneOffrePar, canal, lignesChoisies }) {
   return prisma.$transaction(async (tx) => {
     const liste = await tx.listeCadeau.findUnique({
       where: { codeAcces },
@@ -116,6 +116,9 @@ async function offrirSurListe({ codeAcces, carteCadeauCode, modePaiement, montan
       if (carte.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
       montantUtilise = carte.denomination;
     } else if (modePaiement) {
+      if (canal === 'web' && (!telephoneOffrePar || !telephoneOffrePar.trim())) {
+        throw new Error('Le téléphone est requis pour que la boutique puisse vous contacter.');
+      }
       if (montant === undefined || montant === null || Number.isNaN(Number(montant))) {
         throw new Error('Montant invalide.');
       }
@@ -163,6 +166,7 @@ async function offrirSurListe({ codeAcces, carteCadeauCode, modePaiement, montan
         carteCadeauId: carte ? carte.id : null,
         modePaiement: carte ? null : modePaiement,
         offrePar: offrePar || null,
+        telephoneOffrePar: telephoneOffrePar || null,
         canal,
         montantUtilise,
         statutConfirmation,
@@ -185,7 +189,7 @@ async function offrirSurListe({ codeAcces, carteCadeauCode, modePaiement, montan
 // Soit carteCadeauCode est fourni (validation immédiate), soit modePaiement + montant
 // (déclaratif, à vérifier par Victoria avant confirmation définitive).
 async function offrirDepuisWeb(req, res) {
-  const { carteCadeauCode, modePaiement, montant, offrePar, lignes } = req.body;
+  const { carteCadeauCode, modePaiement, montant, offrePar, telephoneOffrePar, lignes } = req.body;
   if (!Array.isArray(lignes) || lignes.length === 0) {
     return res.status(400).json({ error: 'Au moins un article choisi est requis.' });
   }
@@ -195,7 +199,7 @@ async function offrirDepuisWeb(req, res) {
   try {
     const resultat = await offrirSurListe({
       codeAcces: req.params.codeAcces, carteCadeauCode, modePaiement, montant,
-      offrePar, canal: 'web', lignesChoisies: lignes,
+      offrePar, telephoneOffrePar, canal: 'web', lignesChoisies: lignes,
     });
     res.status(201).json(resultat);
   } catch (err) {
@@ -206,7 +210,7 @@ async function offrirDepuisWeb(req, res) {
 // POST /api/listes-cadeaux/:codeAcces/offrir-telephone  (interne, saisi par la vendeuse)
 // La vendeuse a déjà vérifié la réception du paiement avant de saisir -> confirmé direct.
 async function offrirParTelephone(req, res) {
-  const { carteCadeauCode, modePaiement, montant, offrePar, lignes } = req.body;
+  const { carteCadeauCode, modePaiement, montant, offrePar, telephoneOffrePar, lignes } = req.body;
   if (!Array.isArray(lignes) || lignes.length === 0) {
     return res.status(400).json({ error: 'Au moins un article choisi est requis.' });
   }
@@ -216,7 +220,7 @@ async function offrirParTelephone(req, res) {
   try {
     const resultat = await offrirSurListe({
       codeAcces: req.params.codeAcces, carteCadeauCode, modePaiement, montant,
-      offrePar, canal: 'telephone', lignesChoisies: lignes,
+      offrePar, telephoneOffrePar, canal: 'telephone', lignesChoisies: lignes,
     });
     res.status(201).json(resultat);
   } catch (err) {

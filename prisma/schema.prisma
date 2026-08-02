@@ -565,6 +565,7 @@ model ListeCadeauCarteUtilisee {
   carteCadeau    CarteCadeau?             @relation(fields: [carteCadeauId], references: [id])
   modePaiement   String?
   offrePar       String?
+  telephoneOffrePar String?
   canal          String
   montantUtilise Decimal
   statutConfirmation StatutConfirmationOffre @default(CONFIRME)
