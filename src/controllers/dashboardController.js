@@ -62,14 +62,10 @@ async function obtenirDashboard(req, res) {
   const boutiques = await prisma.lieu.findMany({ where: { type: 'BOUTIQUE', actif: true } });
 
   const parBoutique = await Promise.all(boutiques.map(async (b) => {
-    const [lignesVenduesMois, depensesLieuMois, ventesLieuJour, ventesLieuMois] = await Promise.all([
+    const [lignesVenduesMois, ventesLieuJour, ventesLieuMois] = await Promise.all([
       prisma.ligneVente.findMany({
         where: { vente: { lieuId: b.id, statut: 'VALIDEE', createdAt: { gte: debutMois } } },
         select: { quantite: true, article: { select: { prixAchat: true } } },
-      }),
-      prisma.depense.findMany({
-        where: { lieuId: b.id, dateDepense: { gte: debutMois } },
-        select: { montant: true },
       }),
       prisma.vente.findMany({
         where: { lieuId: b.id, statut: 'VALIDEE', createdAt: { gte: debutJour } },
@@ -81,9 +77,17 @@ async function obtenirDashboard(req, res) {
       }),
     ]);
 
+    // Le modèle Depense de Jesma U n'est pas rattaché à une boutique (contrairement à
+    // Archange Bébé) — tant que Jesma U n'a qu'une seule boutique, le total des dépenses
+    // du mois (toutes confondues) est une approximation fidèle de la marge de CETTE boutique.
+    const depensesMoisToutesBoutiques = await prisma.depense.findMany({
+      where: { dateDepense: { gte: debutMois } },
+      select: { montant: true },
+    });
+
     const totalVentesLieu = ventesLieuMois.reduce((s, v) => s + Number(v.totalNet), 0);
     const coutMarchandise = lignesVenduesMois.reduce((s, l) => s + l.quantite * Number(l.article.prixAchat), 0);
-    const totalDepensesLieu = depensesLieuMois.reduce((s, d) => s + Number(d.montant), 0);
+    const totalDepensesLieu = depensesMoisToutesBoutiques.reduce((s, d) => s + Number(d.montant), 0);
     const objectif = Number(b.objectifMensuel);
 
     return {
