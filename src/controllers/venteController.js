@@ -395,7 +395,56 @@ async function listerVentes(req, res) {
   res.json(ventes);
 }
 
+// GET /api/ventes/en-attente
+// Visible depuis n'importe quel poste — une vente mise en attente par une caissière
+// doit pouvoir être reprise par une autre, sur un autre ordinateur.
+async function listerVentesEnAttente(req, res) {
+  const ventes = await prisma.venteEnAttente.findMany({
+    include: { utilisateur: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json(ventes);
+}
+
+// POST /api/ventes/en-attente
+async function creerVenteEnAttente(req, res) {
+  const { lieuId, vendeurId, clientId, typeVente, remiseMontant, motifRemise, panier } = req.body;
+  const utilisateurId = req.user.id;
+
+  if (!Array.isArray(panier) || panier.length === 0) {
+    return res.status(400).json({ error: 'Le panier est vide, rien à mettre en attente.' });
+  }
+
+  const venteEnAttente = await prisma.venteEnAttente.create({
+    data: {
+      utilisateurId,
+      lieuId: lieuId ? Number(lieuId) : null,
+      vendeurId: vendeurId ? Number(vendeurId) : null,
+      clientId: clientId ? Number(clientId) : null,
+      typeVente: typeVente || null,
+      remiseMontant: remiseMontant ? Number(remiseMontant) : null,
+      motifRemise: motifRemise || null,
+      panier,
+    },
+  });
+  res.status(201).json(venteEnAttente);
+}
+
+// DELETE /api/ventes/en-attente/:id
+// Utilisée aussi bien pour "reprendre" (le frontend supprime après avoir repris le
+// panier) que pour un abandon volontaire de la vente en attente.
+async function supprimerVenteEnAttente(req, res) {
+  const id = Number(req.params.id);
+  try {
+    await prisma.venteEnAttente.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: 'Vente en attente introuvable.' });
+  }
+}
+
 module.exports = {
   creerVente, annulerVente, listerVentes,
   demanderAnnulation, listerDemandesAnnulation, rejeterAnnulation,
+  listerVentesEnAttente, creerVenteEnAttente, supprimerVenteEnAttente,
 };

@@ -75,6 +75,7 @@ model Utilisateur {
   avoirsCrees       Avoir[]
   demandesAnnulation Vente[]    @relation("DemandeurAnnulationVente")
   facturesProFormaCreees FactureProForma[]
+  ventesEnAttente VenteEnAttente[]
 }
 model JournalActivite {
   id            Int         @id @default(autoincrement())
@@ -662,4 +663,25 @@ model LigneFactureProForma {
   article           Article         @relation(fields: [articleId], references: [id])
   quantite          Int
   prixUnitaire      Decimal
+}
+
+// ------------------------------------------------------------
+// VENTES EN ATTENTE
+// Vente suspendue par une caissière (client parti chercher de l'argent, etc.) — pas
+// encore une vraie vente (pas de mouvement de stock, pas de paiement). Stockée côté
+// serveur pour être retrouvable depuis n'importe quel poste, contrairement à un
+// stockage local au navigateur qui la rendrait invisible ailleurs.
+// ------------------------------------------------------------
+model VenteEnAttente {
+  id            Int         @id @default(autoincrement())
+  utilisateurId Int
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
+  lieuId        Int?
+  vendeurId     Int?
+  clientId      Int?
+  typeVente     String?
+  remiseMontant Decimal?
+  motifRemise   String?
+  panier        Json
+  createdAt     DateTime    @default(now())
 }
