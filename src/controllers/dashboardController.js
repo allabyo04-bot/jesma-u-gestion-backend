@@ -18,7 +18,8 @@ async function obtenirDashboard(req, res) {
     createdAt: { gte: debutAujourdhui(), lte: finAujourdhui() },
   };
 
-  const [ventesDuJour, depensesDuJour, demandesRemiseEnAttente, recompensesEnAttente] =
+  const [ventesDuJour, depensesDuJour, demandesRemiseEnAttente, recompensesEnAttente,
+    listesActives, offresEnAttenteListe, offresConfirmees] =
     await Promise.all([
       prisma.vente.findMany({ where }),
       prisma.depense.findMany({
@@ -26,6 +27,9 @@ async function obtenirDashboard(req, res) {
       }),
       prisma.demandeRemise.count({ where: { statut: 'EN_ATTENTE' } }),
       prisma.recompenseFidelite.count({ where: { statut: 'EN_ATTENTE' } }),
+      prisma.listeCadeau.count({ where: { actif: true } }),
+      prisma.listeCadeauCarteUtilisee.count({ where: { statutConfirmation: 'EN_ATTENTE_VERIFICATION' } }),
+      prisma.listeCadeauCarteUtilisee.findMany({ where: { statutConfirmation: 'CONFIRME' } }),
     ]);
 
   // Prisma ne compare pas nativement deux colonnes entre elles (stockActuel <= seuilAlerte) ;
@@ -46,6 +50,11 @@ async function obtenirDashboard(req, res) {
     })),
     demandesRemiseEnAttente,
     recompensesFideliteEnAttente: recompensesEnAttente,
+    listesCadeaux: {
+      listesActives,
+      offresEnAttente: offresEnAttenteListe,
+      totalOfferConfirme: offresConfirmees.reduce((s, o) => s + Number(o.montantUtilise), 0),
+    },
   });
 }
 
