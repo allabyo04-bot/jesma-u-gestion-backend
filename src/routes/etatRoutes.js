@@ -6,7 +6,7 @@ const {
   exporterMargeCsv, exporterVentesCsv, exporterDepensesCsv,
   produitsPeremptionProche,
 } = require('../controllers/etatController');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, requireModule } = require('../middleware/auth');
 
 router.get('/marge-produits', requireAuth, requireRole('ADMIN'), margeParProduit);
 router.get('/marge-produits/export.csv', requireAuth, requireRole('ADMIN'), exporterMargeCsv);
@@ -17,7 +17,7 @@ router.get('/par-mode-paiement', requireAuth, parModePaiement);
 router.get('/par-type', requireAuth, parType);
 router.get('/fermeture-caisse', requireAuth, fermetureCaisse);
 router.get('/peremption-proche', requireAuth, produitsPeremptionProche);
-router.get('/ventes/export.csv', requireAuth, requireRole('ADMIN'), exporterVentesCsv);
-router.get('/depenses/export.csv', requireAuth, requireRole('ADMIN'), exporterDepensesCsv);
+router.get('/ventes/export.csv', requireAuth, requireModule('RAPPORTS'), exporterVentesCsv);
+router.get('/depenses/export.csv', requireAuth, requireModule('RAPPORTS'), exporterDepensesCsv);
 
 module.exports = router;
