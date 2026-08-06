@@ -107,6 +107,7 @@ model SousFamille {
   nom            String
   codePrefixe    String   @unique
   dernierNumero  Int      @default(0)
+  description    String?
   familleId      Int
   famille        Famille  @relation(fields: [familleId], references: [id])
   actif          Boolean  @default(true)
@@ -128,6 +129,7 @@ model Article {
   codeInterne     String?      @unique
   designation     String
   photoUrl        String?
+  description     String?
   familleId       Int?
   famille         Famille?     @relation(fields: [familleId], references: [id])
   sousFamilleId   Int?
@@ -152,6 +154,22 @@ model Article {
   lignesTransfert    LigneTransfertStock[]
   lignesAvoirRetour  LigneAvoirRetour[]
   lignesFactureProForma LigneFactureProForma[]
+  photos             PhotoArticle[]
+}
+
+// Plusieurs photos par article (galerie), avec une photo principale utilisée
+// comme vignette dans les listes — Article.photoUrl reste synchronisé sur
+// l'URL de la photo principale pour compatibilité avec l'existant.
+model PhotoArticle {
+  id            Int      @id @default(autoincrement())
+  articleId     Int
+  article       Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  url           String
+  ordre         Int      @default(0)
+  estPrincipale Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([articleId])
 }
 
 // ------------------------------------------------------------

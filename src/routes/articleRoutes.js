@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   listerArticles, rechercherArticle, creerArticle, modifierArticle, genererCodeBarre,
-  listerCodesAImprimer, imprimerEtiquettes, uploaderPhoto, deplacerGroupe,
+  listerCodesAImprimer, imprimerEtiquettes, uploaderPhoto, supprimerPhoto, definirPhotoPrincipale, deplacerGroupe,
 } = require('../controllers/articleController');
 const { requireAuth, requireRole, requireModule } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -16,5 +16,7 @@ router.put('/deplacer-groupe', requireAuth, requireModule('ARTICLES'), deplacerG
 router.put('/:id', requireAuth, requireModule('ARTICLES'), modifierArticle);
 router.post('/:id/generer-code-barre', requireAuth, requireModule('ARTICLES'), genererCodeBarre);
 router.post('/:id/photo', requireAuth, requireModule('ARTICLES'), upload.single('photo'), uploaderPhoto);
+router.delete('/:id/photos/:photoId', requireAuth, requireModule('ARTICLES'), supprimerPhoto);
+router.put('/:id/photos/:photoId/principale', requireAuth, requireModule('ARTICLES'), definirPhotoPrincipale);
 
 module.exports = router;
