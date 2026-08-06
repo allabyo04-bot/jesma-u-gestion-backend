@@ -575,6 +575,8 @@ model ListeCadeauCarteUtilisee {
   canal          String
   montantUtilise Decimal
   statutConfirmation StatutConfirmationOffre @default(CONFIRME)
+  jekoPaymentLinkId String?
+  jekoPaymentUrl    String?
   validateurId   Int?
   validateur     Utilisateur?             @relation("ValidateurOffre", fields: [validateurId], references: [id])
   dateValidation DateTime?

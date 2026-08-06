@@ -23,9 +23,15 @@ const fideliteRoutes = require('./routes/fideliteRoutes');
 const journalRoutes = require('./routes/journalRoutes');
 const roleRoutes = require('./routes/roleRoutes');
 const proFormaRoutes = require('./routes/proFormaRoutes');
+const webhookJekoRoutes = require('./routes/webhookJekoRoutes');
 
 const app = express();
 app.use(cors());
+
+// Le webhook JEKO doit être monté AVANT express.json() global, avec un corps brut
+// (Buffer), car la vérification de signature HMAC porte sur les octets exacts reçus.
+app.use('/api/webhooks/jeko', express.raw({ type: 'application/json' }), webhookJekoRoutes);
+
 app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ ok: true, app: 'Jesma U - Gestion Commerciale' }));

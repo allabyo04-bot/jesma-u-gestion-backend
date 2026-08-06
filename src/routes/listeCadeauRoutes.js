@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   creerListeCadeau, listerListesCadeaux, consulterListePublique, offrirDepuisWeb, offrirParTelephone,
-  listerOffresEnAttente, confirmerOffre, rejeterOffre,
+  listerOffresEnAttente, confirmerOffre, rejeterOffre, obtenirStatutPaiementOffre, jekoDisponible,
 } = require('../controllers/listeCadeauController');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
@@ -19,5 +19,7 @@ router.post('/offres/:id/rejeter', requireAuth, requireRole('ADMIN'), rejeterOff
 // Routes publiques (accessibles via le lien partagé, sans compte)
 router.get('/publique/:codeAcces', consulterListePublique);
 router.post('/publique/:codeAcces/offrir', offrirDepuisWeb);
+router.get('/offres/:id/statut-paiement', obtenirStatutPaiementOffre);
+router.get('/jeko-disponible', jekoDisponible);
 
 module.exports = router;

@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const prisma = require('../lib/prisma');
+const jeko = require('../lib/jeko');
 
 function genererCodeAcces() {
   return crypto.randomBytes(6).toString('hex'); // ex: "a1b2c3d4e5f6"
@@ -115,6 +116,17 @@ async function offrirSurListe({ codeAcces, carteCadeauCode, modePaiement, montan
       if (!carte) throw new Error('Carte cadeau introuvable.');
       if (carte.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
       montantUtilise = carte.denomination;
+    } else if (modePaiement === 'JEKO') {
+      // Paiement en ligne réel (Wave/OM/MTN/carte via JEKO) — le montant n'est jamais
+      // déclaré par le donateur, toujours calculé ici à partir des articles choisis.
+      // La confirmation ne vient jamais d'un canal "telephone" (saisie vendeuse) : seul
+      // le webhook JEKO, une fois le paiement effectivement reçu, fera passer l'offre
+      // à CONFIRME (voir webhookJekoController.js).
+      if (!telephoneOffrePar || !telephoneOffrePar.trim()) {
+        throw new Error('Le téléphone est requis pour le paiement en ligne.');
+      }
+      montantUtilise = valeurLignesChoisies;
+      statutConfirmation = 'EN_ATTENTE_VERIFICATION';
     } else if (modePaiement) {
       if (canal === 'web' && (!telephoneOffrePar || !telephoneOffrePar.trim())) {
         throw new Error('Le téléphone est requis pour que la boutique puisse vous contacter.');
@@ -197,10 +209,30 @@ async function offrirDepuisWeb(req, res) {
     return res.status(400).json({ error: 'Indiquez une carte cadeau ou un mode de paiement.' });
   }
   try {
-    const resultat = await offrirSurListe({
+    let resultat = await offrirSurListe({
       codeAcces: req.params.codeAcces, carteCadeauCode, modePaiement, montant,
       offrePar, telephoneOffrePar, canal: 'web', lignesChoisies: lignes,
     });
+
+    if (modePaiement === 'JEKO') {
+      try {
+        const lien = await jeko.creerLienPaiement({
+          titre: `Liste cadeau Jesma U — offre #${resultat.id}`,
+          montantXof: Number(resultat.montantUtilise),
+        });
+        resultat = await prisma.listeCadeauCarteUtilisee.update({
+          where: { id: resultat.id },
+          data: { jekoPaymentLinkId: lien.id, jekoPaymentUrl: lien.link },
+          include: { lignesCouvertes: true },
+        });
+      } catch (err) {
+        // La réservation des articles tient déjà (voir commentaire dans offrirSurListe) ;
+        // si le lien de paiement échoue à se créer, l'offre reste en attente et Victoria
+        // pourra la traiter manuellement comme n'importe quelle offre déclarative.
+        resultat = { ...resultat, erreurPaiement: err.message };
+      }
+    }
+
     res.status(201).json(resultat);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -308,4 +340,22 @@ async function rejeterOffre(req, res) {
 module.exports = {
   creerListeCadeau, listerListesCadeaux, consulterListePublique, offrirDepuisWeb, offrirParTelephone,
   listerOffresEnAttente, confirmerOffre, rejeterOffre,
+  obtenirStatutPaiementOffre, jekoDisponible,
 };
+
+// GET /api/listes-cadeaux/offres/:id/statut-paiement  (public)
+// Utilisé par la page publique pour savoir si le paiement JEKO d'une offre a été reçu.
+// Ne renvoie rien pour une offre qui n'est pas payée en JEKO (rien à sonder dans ce cas).
+async function obtenirStatutPaiementOffre(req, res) {
+  const offre = await prisma.listeCadeauCarteUtilisee.findUnique({ where: { id: Number(req.params.id) } });
+  if (!offre || offre.modePaiement !== 'JEKO') return res.status(404).json({ error: 'Offre introuvable.' });
+  res.json({
+    statutConfirmation: offre.statutConfirmation,
+    jekoPaymentUrl: offre.jekoPaymentUrl,
+  });
+}
+
+// GET /api/listes-cadeaux/jeko-disponible  (public)
+async function jekoDisponible(req, res) {
+  res.json({ disponible: jeko.estConfigure() });
+}
