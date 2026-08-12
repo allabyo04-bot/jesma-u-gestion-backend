@@ -211,17 +211,29 @@ async function imprimerEtiquettes(req, res) {
   const parId = Object.fromEntries(articles.map((a) => [a.id, a]));
 
   const blocsEtiquettes = [];
+  const articlesIgnores = [];
   for (const ligne of lignes) {
     const article = parId[Number(ligne.articleId)];
     if (!article) continue;
     const quantite = Math.max(1, Number(ligne.quantite) || 1);
+
+    let svgCodeBarre = '';
+    if (article.codeBarre) {
+      try {
+        svgCodeBarre = genererSvgEAN13(article.codeBarre);
+      } catch {
+        svgCodeBarre = '';
+        if (!articlesIgnores.includes(article.reference)) articlesIgnores.push(article.reference);
+      }
+    }
+
     for (let i = 0; i < quantite; i++) {
       blocsEtiquettes.push(`
         <div class="etiquette">
           <div class="marque">Jesma U</div>
           <div class="designation">${article.designation}</div>
           <div class="prix">${Number(article.prixVente).toLocaleString('fr-FR')} F</div>
-          ${article.codeBarre ? genererSvgEAN13(article.codeBarre) : ''}
+          ${svgCodeBarre}
           ${article.codeBarre ? `<div class="code">${article.codeBarre}</div>` : ''}
           <div class="reference">${article.reference}</div>
         </div>
@@ -234,12 +246,15 @@ async function imprimerEtiquettes(req, res) {
     data: { quantiteAImprimer: 0 },
   });
 
-  const html = construireHtmlEtiquettes(blocsEtiquettes.join('\n'));
+  const html = construireHtmlEtiquettes(blocsEtiquettes.join('\n'), articlesIgnores);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 }
 
-function construireHtmlEtiquettes(contenu) {
+function construireHtmlEtiquettes(contenu, articlesIgnores = []) {
+  const messageAlerte = articlesIgnores.length > 0
+    ? `alert(${JSON.stringify(`⚠️ Code-barre invalide, imprimé sans visuel code-barre pour : ${articlesIgnores.join(', ')}\\nPense à régénérer leur code-barre.`)});`
+    : '';
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -264,7 +279,7 @@ function construireHtmlEtiquettes(contenu) {
 </head>
 <body>
   <div class="grille">${contenu || '<p>Aucune étiquette en attente.</p>'}</div>
-  <script>window.onload = () => window.print();</script>
+  <script>${messageAlerte} window.print();</script>
 </body>
 </html>`;
 }
