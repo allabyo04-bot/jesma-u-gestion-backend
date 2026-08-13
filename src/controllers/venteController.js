@@ -95,8 +95,18 @@ async function creerVente(req, res) {
         contributionAvoir = Math.min(Number(avoir.montant), totalNet);
       }
 
+      let carteCadeau = null;
+      if (carteCadeauCode) {
+        carteCadeau = await tx.carteCadeau.findUnique({ where: { codeBarre: carteCadeauCode } });
+        if (!carteCadeau) throw new Error('Carte cadeau introuvable.');
+        if (carteCadeau.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
+      }
+      const contributionCarteCadeau = carteCadeau
+        ? Math.min(Number(carteCadeau.denomination), totalNet - contributionAvoir)
+        : 0;
+
       const totalPaiements = listePaiements.reduce((s, p) => s + Number(p.montant), 0);
-      const totalCouvert = totalPaiements + contributionAvoir;
+      const totalCouvert = totalPaiements + contributionAvoir + contributionCarteCadeau;
       const resteApresPaiements = totalNet - totalCouvert;
 
       if (type === 'COMPTANT') {
@@ -112,15 +122,8 @@ async function creerVente(req, res) {
           throw new Error(`Le total des paiements dépasse le montant de ${Math.abs(resteApresPaiements).toFixed(2)} F.`);
         }
       }
-      if (type === 'COMPTANT' && listePaiements.length === 0 && contributionAvoir === 0) {
+      if (type === 'COMPTANT' && listePaiements.length === 0 && contributionAvoir === 0 && contributionCarteCadeau === 0) {
         throw new Error('Ajoutez au moins un mode de paiement.');
-      }
-
-      let carteCadeau = null;
-      if (carteCadeauCode) {
-        carteCadeau = await tx.carteCadeau.findUnique({ where: { codeBarre: carteCadeauCode } });
-        if (!carteCadeau) throw new Error('Carte cadeau introuvable.');
-        if (carteCadeau.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
       }
 
       const modePaiementResume =
