@@ -69,6 +69,7 @@ model Utilisateur {
   mouvementsStock   MouvementStock[]
   demandesRemise    DemandeRemise[] @relation("DemandeurRemise")
   remisesApprouvees DemandeRemise[] @relation("ApprobateurRemise")
+  codesDeblocageRemiseCrees CodeDeblocageRemise[] @relation("CreateurCodeDeblocage")
   activationsCarte  CarteCadeauCycle[] @relation("ActivateurCycle")
   offresValidees    ListeCadeauCarteUtilisee[] @relation("ValidateurOffre")
   reglementsCredit  ReglementCredit[]
@@ -443,6 +444,30 @@ model DemandeRemise {
   approbateur    Utilisateur?        @relation("ApprobateurRemise", fields: [approbateurId], references: [id])
   createdAt      DateTime            @default(now())
   resolvedAt     DateTime?
+}
+
+// Seuil au-dela duquel une remise en vente exige un code de deblocage
+// administrateur (voir CodeDeblocageRemise). Ligne unique (id=1). Un seuil
+// non defini (null) desactive completement l'exigence de code.
+model ParametreRemise {
+  id        Int      @id @default(1)
+  seuil     Decimal?
+  updatedAt DateTime @updatedAt
+}
+
+// Code de deblocage a usage unique, genere par un administrateur (Victoria)
+// a la demande, communique oralement/whatsapp au caissier, et invalide des
+// sa premiere utilisation. On ne stocke jamais le code en clair, seulement
+// son empreinte (sha256), pour eviter qu'il soit lisible en base.
+model CodeDeblocageRemise {
+  id        Int         @id @default(autoincrement())
+  codeHache String
+  utilise   Boolean     @default(false)
+  creeParId Int
+  creePar   Utilisateur @relation("CreateurCodeDeblocage", fields: [creeParId], references: [id])
+  createdAt DateTime    @default(now())
+  utiliseAt DateTime?
+  venteId   Int?
 }
 
 // ------------------------------------------------------------

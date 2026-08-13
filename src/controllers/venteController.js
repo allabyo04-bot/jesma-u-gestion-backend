@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { appliquerMouvementStock } = require('../lib/stock');
 const { enregistrerActivite } = require('../lib/journal');
+const { hacherCode } = require('./remiseParametreController');
 
 const SEUIL_FIDELITE_MONTANT = 20000;
 const SEUIL_FIDELITE_ACHATS = 10;
@@ -46,6 +47,7 @@ async function creerVente(req, res) {
   const {
     clientId, vendeurId, lieuId, remiseMontant, motifRemise,
     carteCadeauCode, avoirCode, proFormaId, typeVente, lignes, paiements,
+    codeDeblocageRemise,
   } = req.body;
   const utilisateurId = req.user.id;
 
@@ -85,6 +87,23 @@ async function creerVente(req, res) {
       );
       const remise = Number(remiseMontant || 0);
       let totalNet = totalHT - remise;
+
+      let codeDeblocageValide = null;
+      if (remise > 0) {
+        const parametreRemise = await tx.parametreRemise.findUnique({ where: { id: 1 } });
+        const seuilRemise = parametreRemise?.seuil != null ? Number(parametreRemise.seuil) : null;
+        if (seuilRemise !== null && remise > seuilRemise) {
+          if (!codeDeblocageRemise || !String(codeDeblocageRemise).trim()) {
+            throw new Error(`Un code de déblocage administrateur est requis pour une remise supérieure à ${seuilRemise.toLocaleString('fr-FR')} F.`);
+          }
+          codeDeblocageValide = await tx.codeDeblocageRemise.findFirst({
+            where: { codeHache: hacherCode(codeDeblocageRemise), utilise: false },
+          });
+          if (!codeDeblocageValide) {
+            throw new Error("Code de déblocage invalide, déjà utilisé, ou expiré. Demandez-en un nouveau à l'administrateur.");
+          }
+        }
+      }
 
       let avoir = null;
       let contributionAvoir = 0;
@@ -162,6 +181,13 @@ async function creerVente(req, res) {
         },
         include: { lignes: true, paiements: true },
       });
+
+      if (codeDeblocageValide) {
+        await tx.codeDeblocageRemise.update({
+          where: { id: codeDeblocageValide.id },
+          data: { utilise: true, utiliseAt: new Date(), venteId: vente.id },
+        });
+      }
 
       for (const ligne of vente.lignes) {
         await appliquerMouvementStock(tx, {
