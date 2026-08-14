@@ -27,7 +27,8 @@ async function creerUtilisateur(req, res) {
     return res.status(400).json({ error: 'Rôle invalide.' });
   }
 
-  const existant = await prisma.utilisateur.findUnique({ where: { nomUtilisateur } });
+  const nomUtilisateurNormalise = nomUtilisateur.trim().toLowerCase();
+  const existant = await prisma.utilisateur.findUnique({ where: { nomUtilisateur: nomUtilisateurNormalise } });
   if (existant) {
     return res.status(409).json({ error: "Ce nom d'utilisateur existe déjà." });
   }
@@ -39,7 +40,7 @@ async function creerUtilisateur(req, res) {
   // encore dessus (bascule d'accès complet, badges, etc.).
   const utilisateur = await prisma.utilisateur.create({
     data: {
-      nomUtilisateur,
+      nomUtilisateur: nomUtilisateurNormalise,
       pin: pinHache,
       nomComplet,
       role: roleChoisi.estAdmin ? 'ADMIN' : 'CAISSIER',
@@ -62,12 +63,15 @@ async function modifierUtilisateur(req, res) {
   if (!utilisateur) return res.status(404).json({ error: 'Utilisateur introuvable.' });
 
   let nouveauNomUtilisateur = utilisateur.nomUtilisateur;
-  if (nomUtilisateur !== undefined && nomUtilisateur.trim() && nomUtilisateur.trim() !== utilisateur.nomUtilisateur) {
-    const conflit = await prisma.utilisateur.findUnique({ where: { nomUtilisateur: nomUtilisateur.trim() } });
-    if (conflit) {
-      return res.status(409).json({ error: "Ce nom d'utilisateur existe déjà." });
+  if (nomUtilisateur !== undefined && nomUtilisateur.trim()) {
+    const normalise = nomUtilisateur.trim().toLowerCase();
+    if (normalise !== utilisateur.nomUtilisateur) {
+      const conflit = await prisma.utilisateur.findUnique({ where: { nomUtilisateur: normalise } });
+      if (conflit) {
+        return res.status(409).json({ error: "Ce nom d'utilisateur existe déjà." });
+      }
+      nouveauNomUtilisateur = normalise;
     }
-    nouveauNomUtilisateur = nomUtilisateur.trim();
   }
 
   let nouveauRoleTexte = utilisateur.role;
