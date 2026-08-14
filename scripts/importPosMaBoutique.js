@@ -70,6 +70,16 @@ async function main() {
     return;
   }
 
+  // Garde-fou : si des articles existent déjà (import précédent déjà fait, ou
+  // Victoria a commencé à travailler dans l'app), on refuse de purger quoi que
+  // ce soit. Empêche qu'un oubli de retirer la variable sur Railway ne relance
+  // silencieusement une purge à chaque déploiement suivant.
+  const nbArticlesExistants = await prisma.article.count();
+  if (nbArticlesExistants > 0) {
+    console.log(`[import] ${nbArticlesExistants} article(s) déjà présent(s) en base — import déjà effectué (ou données réelles en cours). Script ignoré par sécurité.`);
+    return;
+  }
+
   console.log('[import] Démarrage de l\'import catalogue Jesma U...');
   const data = require(EXPORT_PATH);
 
