@@ -56,10 +56,19 @@ async function creerUtilisateur(req, res) {
 // PUT /api/utilisateurs/:id   { nomComplet?, roleId?, lieuId?, actif? }
 async function modifierUtilisateur(req, res) {
   const id = Number(req.params.id);
-  const { nomComplet, roleId, lieuId, actif } = req.body;
+  const { nomUtilisateur, nomComplet, roleId, lieuId, actif } = req.body;
 
   const utilisateur = await prisma.utilisateur.findUnique({ where: { id } });
   if (!utilisateur) return res.status(404).json({ error: 'Utilisateur introuvable.' });
+
+  let nouveauNomUtilisateur = utilisateur.nomUtilisateur;
+  if (nomUtilisateur !== undefined && nomUtilisateur.trim() && nomUtilisateur.trim() !== utilisateur.nomUtilisateur) {
+    const conflit = await prisma.utilisateur.findUnique({ where: { nomUtilisateur: nomUtilisateur.trim() } });
+    if (conflit) {
+      return res.status(409).json({ error: "Ce nom d'utilisateur existe déjà." });
+    }
+    nouveauNomUtilisateur = nomUtilisateur.trim();
+  }
 
   let nouveauRoleTexte = utilisateur.role;
   let nouveauRoleId = utilisateur.roleId;
@@ -76,6 +85,7 @@ async function modifierUtilisateur(req, res) {
   const misAJour = await prisma.utilisateur.update({
     where: { id },
     data: {
+      nomUtilisateur: nouveauNomUtilisateur,
       nomComplet: nomComplet ?? utilisateur.nomComplet,
       role: nouveauRoleTexte,
       roleId: nouveauRoleId,
