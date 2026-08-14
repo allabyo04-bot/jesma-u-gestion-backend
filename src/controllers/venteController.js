@@ -128,18 +128,11 @@ async function creerVente(req, res) {
       const totalCouvert = totalPaiements + contributionAvoir + contributionCarteCadeau;
       const resteApresPaiements = totalNet - totalCouvert;
 
-      if (type === 'COMPTANT') {
-        if (Math.abs(resteApresPaiements) > 1) {
-          throw new Error(
-            resteApresPaiements > 0
-              ? `Il manque ${resteApresPaiements.toFixed(2)} F pour couvrir le total.`
-              : `Le total des paiements dépasse le montant de ${Math.abs(resteApresPaiements).toFixed(2)} F.`
-          );
-        }
-      } else {
-        if (resteApresPaiements < -1) {
-          throw new Error(`Le total des paiements dépasse le montant de ${Math.abs(resteApresPaiements).toFixed(2)} F.`);
-        }
+      // Un excédent (le client donne plus que le total, la caissière lui rend la
+      // monnaie) est normal et ne doit jamais bloquer la vente — seul un montant
+      // insuffisant est refusé.
+      if (type === 'COMPTANT' && resteApresPaiements > 1) {
+        throw new Error(`Il manque ${resteApresPaiements.toFixed(2)} F pour couvrir le total.`);
       }
       if (type === 'COMPTANT' && listePaiements.length === 0 && contributionAvoir === 0 && contributionCarteCadeau === 0) {
         throw new Error('Ajoutez au moins un mode de paiement.');
