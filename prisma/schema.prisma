@@ -70,6 +70,7 @@ model Utilisateur {
   demandesRemise    DemandeRemise[] @relation("DemandeurRemise")
   remisesApprouvees DemandeRemise[] @relation("ApprobateurRemise")
   codesDeblocageRemiseCrees CodeDeblocageRemise[] @relation("CreateurCodeDeblocage")
+  demandesCodeRemise DemandeCodeDeblocage[] @relation("DemandeurCodeDeblocage")
   activationsCarte  CarteCadeauCycle[] @relation("ActivateurCycle")
   offresValidees    ListeCadeauCarteUtilisee[] @relation("ValidateurOffre")
   reglementsCredit  ReglementCredit[]
@@ -468,6 +469,19 @@ model CodeDeblocageRemise {
   createdAt DateTime    @default(now())
   utiliseAt DateTime?
   venteId   Int?
+}
+
+// Signal leve automatiquement quand une caissiere est bloquee par le seuil de
+// remise faute de code. Visible sur le tableau de bord admin, resolu en un
+// clic des qu'un nouveau code est genere (voir genererCodeDeblocage).
+model DemandeCodeDeblocage {
+  id            Int         @id @default(autoincrement())
+  demandeurId   Int
+  demandeur     Utilisateur @relation("DemandeurCodeDeblocage", fields: [demandeurId], references: [id])
+  montantRemise Decimal
+  statut        String      @default("EN_ATTENTE") // EN_ATTENTE | TRAITEE
+  createdAt     DateTime    @default(now())
+  traiteeAt     DateTime?
 }
 
 // ------------------------------------------------------------

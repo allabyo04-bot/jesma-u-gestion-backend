@@ -29,7 +29,8 @@ async function obtenirDashboard(req, res) {
   };
 
   const [ventesDuJour, depensesDuJour, demandesRemiseEnAttente, recompensesEnAttente,
-    listesActives, offresEnAttenteListe, offresConfirmees, ventesAvecRemiseMois] =
+    listesActives, offresEnAttenteListe, offresConfirmees, ventesAvecRemiseMois,
+    demandesCodeRemiseEnAttente] =
     await Promise.all([
       prisma.vente.findMany({ where }),
       prisma.depense.findMany({
@@ -44,6 +45,7 @@ async function obtenirDashboard(req, res) {
         where: { statut: 'VALIDEE', remiseMontant: { gt: 0 }, createdAt: { gte: debutMois } },
         select: { remiseMontant: true, createdAt: true },
       }),
+      prisma.demandeCodeDeblocage.count({ where: { statut: 'EN_ATTENTE' } }),
     ]);
 
   // Prisma ne compare pas nativement deux colonnes entre elles (stockActuel <= seuilAlerte) ;
@@ -115,6 +117,7 @@ async function obtenirDashboard(req, res) {
       id: a.id, designation: a.designation, stockActuel: a.stockActuel, seuilAlerte: a.seuilAlerte,
     })),
     demandesRemiseEnAttente,
+    demandesCodeRemiseEnAttente,
     recompensesFideliteEnAttente: recompensesEnAttente,
     listesCadeaux: {
       listesActives,

@@ -42,14 +42,52 @@ async function definirSeuilRemise(req, res) {
   res.json({ seuil: parametre.seuil });
 }
 
+// POST /api/remises/demande-code   { montant }  — n'importe quel utilisateur du
+// module VENTES (une caissiere bloquee par le seuil, sans code disponible).
+async function signalerDemandeCode(req, res) {
+  const { montant } = req.body;
+  const valeur = Number(montant);
+  if (Number.isNaN(valeur) || valeur <= 0) {
+    return res.status(400).json({ error: 'Montant invalide.' });
+  }
+
+  await prisma.demandeCodeDeblocage.create({
+    data: { demandeurId: req.user.id, montantRemise: valeur },
+  });
+
+  res.status(201).json({ ok: true });
+}
+
+// GET /api/remises/demandes-code — ADMIN uniquement. Nombre + liste des
+// demandes en attente, pour le tableau de bord.
+async function listerDemandesCode(req, res) {
+  const demandes = await prisma.demandeCodeDeblocage.findMany({
+    where: { statut: 'EN_ATTENTE' },
+    include: { demandeur: { select: { nomComplet: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json(demandes.map((d) => ({
+    id: d.id,
+    demandeur: d.demandeur?.nomComplet,
+    montantRemise: d.montantRemise,
+    createdAt: d.createdAt,
+  })));
+}
+
 // POST /api/remises/codes-deblocage — ADMIN uniquement. Genere un code a usage
 // unique et le renvoie EN CLAIR une seule fois (jamais plus recuperable ensuite,
-// seule son empreinte est conservee).
+// seule son empreinte est conservee). Resout au passage toutes les demandes de
+// code encore en attente.
 async function genererCodeDeblocage(req, res) {
   const code = genererCode6Chiffres();
 
   await prisma.codeDeblocageRemise.create({
     data: { codeHache: hacherCode(code), creeParId: req.user.id },
+  });
+
+  await prisma.demandeCodeDeblocage.updateMany({
+    where: { statut: 'EN_ATTENTE' },
+    data: { statut: 'TRAITEE', traiteeAt: new Date() },
   });
 
   await enregistrerActivite(prisma, {
@@ -81,4 +119,5 @@ async function listerCodesDeblocage(req, res) {
 
 module.exports = {
   obtenirSeuilRemise, definirSeuilRemise, genererCodeDeblocage, listerCodesDeblocage, hacherCode,
+  signalerDemandeCode, listerDemandesCode,
 };
