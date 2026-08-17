@@ -230,7 +230,6 @@ async function imprimerEtiquettes(req, res) {
     for (let i = 0; i < quantite; i++) {
       blocsEtiquettes.push(`
         <div class="etiquette">
-          <div class="marque">Jesma U</div>
           <div class="designation">${article.designation}</div>
           <div class="prix">${Number(article.prixVente).toLocaleString('fr-FR')} F</div>
           ${svgCodeBarre}
@@ -261,24 +260,28 @@ function construireHtmlEtiquettes(contenu, articlesIgnores = []) {
 <meta charset="UTF-8">
 <title>Étiquettes à imprimer - Jesma U</title>
 <style>
+  @page { size: 40mm 25mm; margin: 0; }
+  * { box-sizing: border-box; }
   body { font-family: Arial, sans-serif; margin: 0; }
-  .grille { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; }
   .etiquette {
-    width: 220px; border: 1px dashed #999; padding: 8px; text-align: center;
-    page-break-inside: avoid;
+    width: 40mm; height: 25mm; padding: 0.8mm 0.8mm;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; overflow: hidden;
+    page-break-inside: avoid; break-inside: avoid;
   }
-  .marque { font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7; margin-bottom: 2px; }
-  .designation { font-size: 12px; font-weight: bold; margin-bottom: 4px; }
-  .prix { font-size: 13px; margin-bottom: 4px; }
-  .code { font-size: 11px; letter-spacing: 1px; margin-top: 2px; }
-  .reference { font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 3px; font-family: 'Courier New', monospace; }
-  @media print {
-    .etiquette { border: 1px solid #000; }
+  .etiquette:not(:last-child) { page-break-after: always; break-after: page; }
+  .designation {
+    width: 100%; font-size: 12px; font-weight: bold; margin-top: 0.6mm;
+    white-space: nowrap; overflow: hidden; text-overflow: clip;
   }
+  .prix { width: 100%; font-size: 13.5px; font-weight: bold; margin-top: 0.6mm; }
+  .etiquette svg { width: 38mm; height: 9mm; margin-top: 0.6mm; }
+  .code { font-size: 9px; letter-spacing: 0.3px; margin-top: 0.3mm; }
+  .reference { font-size: 10.5px; font-weight: bold; letter-spacing: 0.4px; margin-top: 0.4mm; font-family: 'Courier New', monospace; }
 </style>
 </head>
 <body>
-  <div class="grille">${contenu || '<p>Aucune étiquette en attente.</p>'}</div>
+  ${contenu || '<p>Aucune étiquette en attente.</p>'}
   <script>${messageAlerte} window.print();</script>
 </body>
 </html>`;
