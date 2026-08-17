@@ -245,43 +245,58 @@ async function imprimerEtiquettes(req, res) {
     data: { quantiteAImprimer: 0 },
   });
 
-  const html = construireHtmlEtiquettes(blocsEtiquettes.join('\n'), articlesIgnores);
+  const html = construireHtmlEtiquettes(blocsEtiquettes.join('\n'), articlesIgnores, blocsEtiquettes.length);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 }
 
-function construireHtmlEtiquettes(contenu, articlesIgnores = []) {
+function construireHtmlEtiquettes(contenu, articlesIgnores = [], nbEtiquettes = 0) {
   const messageAlerte = articlesIgnores.length > 0
     ? `alert(${JSON.stringify(`⚠️ Code-barre invalide, imprimé sans visuel code-barre pour : ${articlesIgnores.join(', ')}\\nPense à régénérer leur code-barre.`)});`
     : '';
+
+  // Planche A4 autocollante, modèle "65" (42 x 22,8 mm, 5 colonnes x 13 lignes =
+  // 65 étiquettes/page — 5x42mm = 210mm, exactement la largeur d'une A4).
+  // Complète les cases vides sur la dernière page pour que la grille reste
+  // correctement alignée même si le nombre d'étiquettes n'est pas un multiple de 65.
+  const casesVides = nbEtiquettes > 0 ? (65 - (nbEtiquettes % 65)) % 65 : 0;
+  const contenuComplet = contenu + '<div class="etiquette etiquette-vide"></div>'.repeat(casesVides);
+
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
 <title>Étiquettes à imprimer - Jesma U</title>
 <style>
-  @page { size: 40mm 25mm; margin: 0; }
+  @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
   body { font-family: Arial, sans-serif; margin: 0; }
+  .planche {
+    width: 210mm;
+    display: grid;
+    grid-template-columns: repeat(5, 42mm);
+    grid-auto-rows: 22.8mm;
+    page-break-after: always;
+    break-after: page;
+  }
+  .planche:last-child { page-break-after: auto; break-after: auto; }
   .etiquette {
-    width: 40mm; height: 25mm; padding: 0.8mm 0.8mm;
+    width: 42mm; height: 22.8mm; padding: 1mm 1.2mm;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     text-align: center; overflow: hidden;
-    page-break-inside: avoid; break-inside: avoid;
   }
-  .etiquette:not(:last-child) { page-break-after: always; break-after: page; }
   .designation {
-    width: 100%; font-size: 12px; font-weight: bold; margin-top: 0.6mm;
+    width: 100%; font-size: 8.5px; font-weight: bold; line-height: 1.1;
     white-space: nowrap; overflow: hidden; text-overflow: clip;
   }
-  .prix { width: 100%; font-size: 13.5px; font-weight: bold; margin-top: 0.6mm; }
-  .etiquette svg { width: 38mm; height: 9mm; margin-top: 0.6mm; }
-  .code { font-size: 9px; letter-spacing: 0.3px; margin-top: 0.3mm; }
-  .reference { font-size: 10.5px; font-weight: bold; letter-spacing: 0.4px; margin-top: 0.4mm; font-family: 'Courier New', monospace; }
+  .prix { width: 100%; font-size: 10px; font-weight: bold; margin-top: 0.5mm; }
+  .etiquette svg { width: 34mm; height: 7mm; margin-top: 0.4mm; }
+  .code { font-size: 6.5px; letter-spacing: 0.2px; margin-top: 0.2mm; }
+  .reference { font-size: 7.5px; font-weight: bold; letter-spacing: 0.3px; margin-top: 0.3mm; font-family: 'Courier New', monospace; }
 </style>
 </head>
 <body>
-  ${contenu || '<p>Aucune étiquette en attente.</p>'}
+  <div class="planche">${contenuComplet || '<p>Aucune étiquette en attente.</p>'}</div>
   <script>${messageAlerte} window.print();</script>
 </body>
 </html>`;
