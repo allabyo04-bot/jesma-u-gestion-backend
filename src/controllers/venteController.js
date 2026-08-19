@@ -172,7 +172,11 @@ async function creerVente(req, res) {
             })),
           },
         },
-        include: { lignes: true, paiements: true },
+        include: {
+          lignes: { include: { article: { select: { designation: true } } } },
+          paiements: true,
+          client: { select: { nomComplet: true, telephone: true } },
+        },
       });
 
       if (codeDeblocageValide) {
