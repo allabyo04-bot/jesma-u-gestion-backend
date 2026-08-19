@@ -462,6 +462,16 @@ async function corrigerStockArticle(req, res) {
   res.json({ ok: true, ancienStock: stockActuel, nouveauStock: Number(quantiteReelle), ecart: delta });
 }
 
+// GET /api/articles/:id/stock-par-lieu
+async function stockParLieu(req, res) {
+  const articleId = Number(req.params.id);
+  const stocks = await prisma.stockEmplacement.findMany({
+    where: { articleId },
+    include: { lieu: { select: { id: true, nom: true } } },
+  });
+  res.json(stocks.map((s) => ({ lieuId: s.lieuId, lieuNom: s.lieu.nom, quantite: s.quantite })));
+}
+
 module.exports = {
   listerArticles,
   rechercherArticle,
@@ -475,4 +485,5 @@ module.exports = {
   definirPhotoPrincipale,
   deplacerGroupe,
   corrigerStockArticle,
+  stockParLieu,
 };
