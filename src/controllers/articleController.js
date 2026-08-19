@@ -3,6 +3,7 @@ const prisma = require('../lib/prisma');
 const { genererCodeBarreInterne } = require('../utils/barcode');
 const { genererSvgEAN13 } = require('../utils/ean13');
 const { enregistrerActivite } = require('../lib/journal');
+const { appliquerMouvementStock } = require('../lib/stock');
 
 // GET /api/articles?familleId=&sousFamilleId=&enStock=true&q=&prix=
 async function listerArticles(req, res) {
@@ -425,6 +426,42 @@ async function deplacerGroupe(req, res) {
   res.json({ deplaces: resultat.count });
 }
 
+// POST /api/articles/:id/corriger-stock   { lieuId, quantiteReelle }
+// Correction rapide pour un seul article (contrairement à l'inventaire Excel,
+// pensé pour tout le catalogue). Calcule l'écart avec le stock actuel et
+// applique un mouvement de type Correction, comme le fait l'inventaire Excel.
+async function corrigerStockArticle(req, res) {
+  const articleId = Number(req.params.id);
+  const { lieuId, quantiteReelle } = req.body;
+
+  if (!lieuId || quantiteReelle === undefined || quantiteReelle === null || Number(quantiteReelle) < 0) {
+    return res.status(400).json({ error: 'Lieu et quantité réelle (≥ 0) sont requis.' });
+  }
+
+  const article = await prisma.article.findUnique({ where: { id: articleId } });
+  if (!article) return res.status(404).json({ error: 'Article introuvable.' });
+
+  const stockEmplacement = await prisma.stockEmplacement.findUnique({
+    where: { articleId_lieuId: { articleId, lieuId: Number(lieuId) } },
+  });
+  const stockActuel = stockEmplacement ? stockEmplacement.quantite : 0;
+  const delta = Number(quantiteReelle) - stockActuel;
+
+  if (delta === 0) {
+    return res.json({ ok: true, message: 'Aucun écart — quantité déjà correcte.', stockActuel });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await appliquerMouvementStock(tx, {
+      articleId, lieuId: Number(lieuId), delta, type: 'CORRECTION_INVENTAIRE',
+      utilisateurId: req.user.id,
+      notes: `Correction rapide (1 article) : ${stockActuel} → ${quantiteReelle}`,
+    });
+  });
+
+  res.json({ ok: true, ancienStock: stockActuel, nouveauStock: Number(quantiteReelle), ecart: delta });
+}
+
 module.exports = {
   listerArticles,
   rechercherArticle,
@@ -437,4 +474,5 @@ module.exports = {
   supprimerPhoto,
   definirPhotoPrincipale,
   deplacerGroupe,
+  corrigerStockArticle,
 };
