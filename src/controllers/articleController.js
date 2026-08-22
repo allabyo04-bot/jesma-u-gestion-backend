@@ -202,7 +202,7 @@ async function listerCodesAImprimer(req, res) {
 // file d'attente (nouveautés reçues) ou pour n'importe quel article choisi à la
 // demande (réimpression). Remet quantiteAImprimer à 0 pour les articles concernés.
 async function imprimerEtiquettes(req, res) {
-  const { lignes } = req.body;
+  const { lignes, decalageX, decalageY } = req.body;
   if (!Array.isArray(lignes) || lignes.length === 0) {
     return res.status(400).json({ error: 'Aucune étiquette à imprimer.' });
   }
@@ -246,15 +246,21 @@ async function imprimerEtiquettes(req, res) {
     data: { quantiteAImprimer: 0 },
   });
 
-  const html = construireHtmlEtiquettes(blocsEtiquettes.join('\n'), articlesIgnores, blocsEtiquettes.length);
+  const html = construireHtmlEtiquettes(blocsEtiquettes.join('\n'), articlesIgnores, blocsEtiquettes.length, decalageX, decalageY);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 }
 
-function construireHtmlEtiquettes(contenu, articlesIgnores = [], nbEtiquettes = 0) {
+function construireHtmlEtiquettes(contenu, articlesIgnores = [], nbEtiquettes = 0, decalageX = 0, decalageY = 0) {
   const messageAlerte = articlesIgnores.length > 0
     ? `alert(${JSON.stringify(`⚠️ Code-barre invalide, imprimé sans visuel code-barre pour : ${articlesIgnores.join(', ')}\\nPense à régénérer leur code-barre.`)});`
     : '';
+
+  // Décalage de calibrage (mm), à ajuster une fois par imprimante/lot de planches
+  // — aucune imprimante ne peut réellement imprimer à 0mm du bord, ce réglage
+  // compense l'écart réel constaté à l'usage plutôt que de le deviner en code.
+  const dx = Number(decalageX) || 0;
+  const dy = Number(decalageY) || 0;
 
   // Planche A4 autocollante, modèle "65" (42 x 22,8 mm, 5 colonnes x 13 lignes =
   // 65 étiquettes/page — 5x42mm = 210mm, exactement la largeur d'une A4).
@@ -279,6 +285,8 @@ function construireHtmlEtiquettes(contenu, articlesIgnores = [], nbEtiquettes = 
     grid-auto-rows: 22.8mm;
     page-break-after: always;
     break-after: page;
+    margin-top: ${dy}mm;
+    margin-left: ${dx}mm;
   }
   .planche:last-child { page-break-after: auto; break-after: auto; }
   .etiquette {
