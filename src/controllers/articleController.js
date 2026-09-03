@@ -3,15 +3,18 @@ const prisma = require('../lib/prisma');
 const { genererCodeBarreInterne } = require('../utils/barcode');
 const { genererSvgEAN13 } = require('../utils/ean13');
 const { enregistrerActivite } = require('../lib/journal');
+const { appliquerMouvementStock } = require('../lib/stock');
 
-// GET /api/articles?familleId=&sousFamilleId=&enStock=true
+// GET /api/articles?familleId=&sousFamilleId=&enStock=true&q=&prix=
 async function listerArticles(req, res) {
-  const { familleId, sousFamilleId, enStock } = req.query;
+  const { familleId, sousFamilleId, enStock, q, prix } = req.query;
 
   const where = { actif: true };
   if (familleId) where.familleId = Number(familleId);
   if (sousFamilleId) where.sousFamilleId = Number(sousFamilleId);
   if (enStock === 'true') where.stockActuel = { gt: 0 };
+  if (q && q.trim()) where.designation = { contains: q.trim(), mode: 'insensitive' };
+  if (prix !== undefined && prix !== '' && !Number.isNaN(Number(prix))) where.prixVente = Number(prix);
 
   const articles = await prisma.article.findMany({
     where,
@@ -98,10 +101,7 @@ async function creerArticle(req, res) {
           reference,
           codeBarre: codeBarre || null,
           codeInterne: codeInterne || null,
-          designation,
-          familleId: Number(familleId),
-          sousFamilleId: Number(sousFamilleId),
-          prixAchat: prixAchat || 0,
+          designation: designation.trim().toUpperCase(),
           prixVente,
           seuilAlerte: seuilAlerte ?? 5,
           description: description && description.trim() ? description.trim() : null,
@@ -137,10 +137,7 @@ async function modifierArticle(req, res) {
   const misAJour = await prisma.article.update({
     where: { id },
     data: {
-      designation,
-      familleId: Number(familleId),
-      sousFamilleId: Number(sousFamilleId),
-      prixAchat: nouveauPrixAchat,
+      designation: designation.trim().toUpperCase(),
       prixVente,
       seuilAlerte: seuilAlerte ?? article.seuilAlerte,
       actif: actif !== undefined ? actif : article.actif,
@@ -205,7 +202,7 @@ async function listerCodesAImprimer(req, res) {
 // file d'attente (nouveautés reçues) ou pour n'importe quel article choisi à la
 // demande (réimpression). Remet quantiteAImprimer à 0 pour les articles concernés.
 async function imprimerEtiquettes(req, res) {
-  const { lignes } = req.body;
+  const { lignes, decalageX, decalageY } = req.body;
   if (!Array.isArray(lignes) || lignes.length === 0) {
     return res.status(400).json({ error: 'Aucune étiquette à imprimer.' });
   }
@@ -215,17 +212,28 @@ async function imprimerEtiquettes(req, res) {
   const parId = Object.fromEntries(articles.map((a) => [a.id, a]));
 
   const blocsEtiquettes = [];
+  const articlesIgnores = [];
   for (const ligne of lignes) {
     const article = parId[Number(ligne.articleId)];
     if (!article) continue;
     const quantite = Math.max(1, Number(ligne.quantite) || 1);
+
+    let svgCodeBarre = '';
+    if (article.codeBarre) {
+      try {
+        svgCodeBarre = genererSvgEAN13(article.codeBarre);
+      } catch {
+        svgCodeBarre = '';
+        if (!articlesIgnores.includes(article.reference)) articlesIgnores.push(article.reference);
+      }
+    }
+
     for (let i = 0; i < quantite; i++) {
       blocsEtiquettes.push(`
         <div class="etiquette">
-          <div class="marque">Jesma U</div>
           <div class="designation">${article.designation}</div>
           <div class="prix">${Number(article.prixVente).toLocaleString('fr-FR')} F</div>
-          ${article.codeBarre ? genererSvgEAN13(article.codeBarre) : ''}
+          ${svgCodeBarre}
           ${article.codeBarre ? `<div class="code">${article.codeBarre}</div>` : ''}
           <div class="reference">${article.reference}</div>
         </div>
@@ -238,37 +246,67 @@ async function imprimerEtiquettes(req, res) {
     data: { quantiteAImprimer: 0 },
   });
 
-  const html = construireHtmlEtiquettes(blocsEtiquettes.join('\n'));
+  const html = construireHtmlEtiquettes(blocsEtiquettes.join('\n'), articlesIgnores, blocsEtiquettes.length, decalageX, decalageY);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 }
 
-function construireHtmlEtiquettes(contenu) {
+function construireHtmlEtiquettes(contenu, articlesIgnores = [], nbEtiquettes = 0, decalageX = 0, decalageY = 0) {
+  const messageAlerte = articlesIgnores.length > 0
+    ? `alert(${JSON.stringify(`⚠️ Code-barre invalide, imprimé sans visuel code-barre pour : ${articlesIgnores.join(', ')}\\nPense à régénérer leur code-barre.`)});`
+    : '';
+
+  // Décalage de calibrage (mm), à ajuster une fois par imprimante/lot de planches
+  // — aucune imprimante ne peut réellement imprimer à 0mm du bord, ce réglage
+  // compense l'écart réel constaté à l'usage plutôt que de le deviner en code.
+  const dx = Number(decalageX) || 0;
+  const dy = Number(decalageY) || 0;
+
+  // Planche A4 autocollante, modèle "65" (42 x 22,8 mm, 5 colonnes x 13 lignes =
+  // 65 étiquettes/page — 5x42mm = 210mm, exactement la largeur d'une A4).
+  // Complète les cases vides sur la dernière page pour que la grille reste
+  // correctement alignée même si le nombre d'étiquettes n'est pas un multiple de 65.
+  const casesVides = nbEtiquettes > 0 ? (65 - (nbEtiquettes % 65)) % 65 : 0;
+  const contenuComplet = contenu + '<div class="etiquette etiquette-vide"></div>'.repeat(casesVides);
+
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
 <title>Étiquettes à imprimer - Jesma U</title>
 <style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
   body { font-family: Arial, sans-serif; margin: 0; }
-  .grille { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; }
+  .planche {
+    width: 210mm;
+    display: grid;
+    grid-template-columns: repeat(5, 42mm);
+    grid-auto-rows: 22.8mm;
+    page-break-after: always;
+    break-after: page;
+    margin-top: ${dy}mm;
+    margin-left: ${dx}mm;
+  }
+  .planche:last-child { page-break-after: auto; break-after: auto; }
   .etiquette {
-    width: 220px; border: 1px dashed #999; padding: 8px; text-align: center;
-    page-break-inside: avoid;
+    width: 42mm; height: 22.8mm; padding: 1mm 1.2mm;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; overflow: hidden;
   }
-  .marque { font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7; margin-bottom: 2px; }
-  .designation { font-size: 12px; font-weight: bold; margin-bottom: 4px; }
-  .prix { font-size: 13px; margin-bottom: 4px; }
-  .code { font-size: 11px; letter-spacing: 1px; margin-top: 2px; }
-  .reference { font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 3px; font-family: 'Courier New', monospace; }
-  @media print {
-    .etiquette { border: 1px solid #000; }
+  .designation {
+    width: 100%; font-size: 8.5px; font-weight: bold; line-height: 1.1;
+    white-space: nowrap; overflow: hidden; text-overflow: clip;
   }
+  .prix { width: 100%; font-size: 10px; font-weight: bold; margin-top: 0.5mm; }
+  .etiquette svg { width: 34mm; height: 7mm; margin-top: 0.4mm; }
+  .code { font-size: 6.5px; letter-spacing: 0.2px; margin-top: 0.2mm; }
+  .reference { font-size: 7.5px; font-weight: bold; letter-spacing: 0.3px; margin-top: 0.3mm; font-family: 'Courier New', monospace; }
 </style>
 </head>
 <body>
-  <div class="grille">${contenu || '<p>Aucune étiquette en attente.</p>'}</div>
-  <script>window.onload = () => window.print();</script>
+  <div class="planche">${contenuComplet || '<p>Aucune étiquette en attente.</p>'}</div>
+  <script>${messageAlerte} window.print();</script>
 </body>
 </html>`;
 }
@@ -396,6 +434,52 @@ async function deplacerGroupe(req, res) {
   res.json({ deplaces: resultat.count });
 }
 
+// POST /api/articles/:id/corriger-stock   { lieuId, quantiteReelle }
+// Correction rapide pour un seul article (contrairement à l'inventaire Excel,
+// pensé pour tout le catalogue). Calcule l'écart avec le stock actuel et
+// applique un mouvement de type Correction, comme le fait l'inventaire Excel.
+async function corrigerStockArticle(req, res) {
+  const articleId = Number(req.params.id);
+  const { lieuId, quantiteReelle } = req.body;
+
+  if (!lieuId || quantiteReelle === undefined || quantiteReelle === null || Number(quantiteReelle) < 0) {
+    return res.status(400).json({ error: 'Lieu et quantité réelle (≥ 0) sont requis.' });
+  }
+
+  const article = await prisma.article.findUnique({ where: { id: articleId } });
+  if (!article) return res.status(404).json({ error: 'Article introuvable.' });
+
+  const stockEmplacement = await prisma.stockEmplacement.findUnique({
+    where: { articleId_lieuId: { articleId, lieuId: Number(lieuId) } },
+  });
+  const stockActuel = stockEmplacement ? stockEmplacement.quantite : 0;
+  const delta = Number(quantiteReelle) - stockActuel;
+
+  if (delta === 0) {
+    return res.json({ ok: true, message: 'Aucun écart — quantité déjà correcte.', stockActuel });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await appliquerMouvementStock(tx, {
+      articleId, lieuId: Number(lieuId), delta, type: 'CORRECTION_INVENTAIRE',
+      utilisateurId: req.user.id,
+      notes: `Correction rapide (1 article) : ${stockActuel} → ${quantiteReelle}`,
+    });
+  });
+
+  res.json({ ok: true, ancienStock: stockActuel, nouveauStock: Number(quantiteReelle), ecart: delta });
+}
+
+// GET /api/articles/:id/stock-par-lieu
+async function stockParLieu(req, res) {
+  const articleId = Number(req.params.id);
+  const stocks = await prisma.stockEmplacement.findMany({
+    where: { articleId },
+    include: { lieu: { select: { id: true, nom: true } } },
+  });
+  res.json(stocks.map((s) => ({ lieuId: s.lieuId, lieuNom: s.lieu.nom, quantite: s.quantite })));
+}
+
 module.exports = {
   listerArticles,
   rechercherArticle,
@@ -408,4 +492,6 @@ module.exports = {
   supprimerPhoto,
   definirPhotoPrincipale,
   deplacerGroupe,
+  corrigerStockArticle,
+  stockParLieu,
 };

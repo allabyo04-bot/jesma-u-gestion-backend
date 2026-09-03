@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   listerArticles, rechercherArticle, creerArticle, modifierArticle, genererCodeBarre,
   listerCodesAImprimer, imprimerEtiquettes, uploaderPhoto, supprimerPhoto, definirPhotoPrincipale, deplacerGroupe,
+  corrigerStockArticle, stockParLieu,
 } = require('../controllers/articleController');
 const { requireAuth, requireRole, requireModule } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -18,5 +19,7 @@ router.post('/:id/generer-code-barre', requireAuth, requireModule('ARTICLES'), g
 router.post('/:id/photo', requireAuth, requireModule('ARTICLES'), upload.single('photo'), uploaderPhoto);
 router.delete('/:id/photos/:photoId', requireAuth, requireModule('ARTICLES'), supprimerPhoto);
 router.put('/:id/photos/:photoId/principale', requireAuth, requireModule('ARTICLES'), definirPhotoPrincipale);
+router.post('/:id/corriger-stock', requireAuth, requireModule('STOCK'), corrigerStockArticle);
+router.get('/:id/stock-par-lieu', requireAuth, requireModule('STOCK'), stockParLieu);
 
 module.exports = router;

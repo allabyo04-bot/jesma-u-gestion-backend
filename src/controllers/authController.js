@@ -11,7 +11,7 @@ async function login(req, res) {
   }
 
   const utilisateur = await prisma.utilisateur.findUnique({
-    where: { nomUtilisateur },
+    where: { nomUtilisateur: nomUtilisateur.trim().toLowerCase() },
     include: { roleDynamique: { include: { permissions: true } } },
   });
 

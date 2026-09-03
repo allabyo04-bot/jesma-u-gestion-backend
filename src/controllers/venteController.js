@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { appliquerMouvementStock } = require('../lib/stock');
 const { enregistrerActivite } = require('../lib/journal');
+const { hacherCode } = require('./remiseParametreController');
 
 const SEUIL_FIDELITE_MONTANT = 20000;
 const SEUIL_FIDELITE_ACHATS = 10;
@@ -46,6 +47,7 @@ async function creerVente(req, res) {
   const {
     clientId, vendeurId, lieuId, remiseMontant, motifRemise,
     carteCadeauCode, avoirCode, proFormaId, typeVente, lignes, paiements,
+    codeDeblocageRemise,
   } = req.body;
   const utilisateurId = req.user.id;
 
@@ -86,6 +88,23 @@ async function creerVente(req, res) {
       const remise = Number(remiseMontant || 0);
       let totalNet = totalHT - remise;
 
+      let codeDeblocageValide = null;
+      if (remise > 0) {
+        const parametreRemise = await tx.parametreRemise.findUnique({ where: { id: 1 } });
+        const seuilRemise = parametreRemise?.seuil != null ? Number(parametreRemise.seuil) : null;
+        if (seuilRemise !== null && remise > seuilRemise) {
+          if (!codeDeblocageRemise || !String(codeDeblocageRemise).trim()) {
+            throw new Error(`Un code de déblocage administrateur est requis pour une remise supérieure à ${seuilRemise.toLocaleString('fr-FR')} F.`);
+          }
+          codeDeblocageValide = await tx.codeDeblocageRemise.findFirst({
+            where: { codeHache: hacherCode(codeDeblocageRemise), utilise: false },
+          });
+          if (!codeDeblocageValide) {
+            throw new Error("Code de déblocage invalide, déjà utilisé, ou expiré. Demandez-en un nouveau à l'administrateur.");
+          }
+        }
+      }
+
       let avoir = null;
       let contributionAvoir = 0;
       if (avoirCode) {
@@ -95,32 +114,28 @@ async function creerVente(req, res) {
         contributionAvoir = Math.min(Number(avoir.montant), totalNet);
       }
 
-      const totalPaiements = listePaiements.reduce((s, p) => s + Number(p.montant), 0);
-      const totalCouvert = totalPaiements + contributionAvoir;
-      const resteApresPaiements = totalNet - totalCouvert;
-
-      if (type === 'COMPTANT') {
-        if (Math.abs(resteApresPaiements) > 1) {
-          throw new Error(
-            resteApresPaiements > 0
-              ? `Il manque ${resteApresPaiements.toFixed(2)} F pour couvrir le total.`
-              : `Le total des paiements dépasse le montant de ${Math.abs(resteApresPaiements).toFixed(2)} F.`
-          );
-        }
-      } else {
-        if (resteApresPaiements < -1) {
-          throw new Error(`Le total des paiements dépasse le montant de ${Math.abs(resteApresPaiements).toFixed(2)} F.`);
-        }
-      }
-      if (type === 'COMPTANT' && listePaiements.length === 0 && contributionAvoir === 0) {
-        throw new Error('Ajoutez au moins un mode de paiement.');
-      }
-
       let carteCadeau = null;
       if (carteCadeauCode) {
         carteCadeau = await tx.carteCadeau.findUnique({ where: { codeBarre: carteCadeauCode } });
         if (!carteCadeau) throw new Error('Carte cadeau introuvable.');
         if (carteCadeau.statut !== 'ACTIVE') throw new Error("Cette carte cadeau n'est pas active.");
+      }
+      const contributionCarteCadeau = carteCadeau
+        ? Math.min(Number(carteCadeau.denomination), totalNet - contributionAvoir)
+        : 0;
+
+      const totalPaiements = listePaiements.reduce((s, p) => s + Number(p.montant), 0);
+      const totalCouvert = totalPaiements + contributionAvoir + contributionCarteCadeau;
+      const resteApresPaiements = totalNet - totalCouvert;
+
+      // Un excédent (le client donne plus que le total, la caissière lui rend la
+      // monnaie) est normal et ne doit jamais bloquer la vente — seul un montant
+      // insuffisant est refusé.
+      if (type === 'COMPTANT' && resteApresPaiements > 1) {
+        throw new Error(`Il manque ${resteApresPaiements.toFixed(2)} F pour couvrir le total.`);
+      }
+      if (type === 'COMPTANT' && listePaiements.length === 0 && contributionAvoir === 0 && contributionCarteCadeau === 0) {
+        throw new Error('Ajoutez au moins un mode de paiement.');
       }
 
       const modePaiementResume =
@@ -157,8 +172,19 @@ async function creerVente(req, res) {
             })),
           },
         },
-        include: { lignes: true, paiements: true },
+        include: {
+          lignes: { include: { article: { select: { designation: true } } } },
+          paiements: true,
+          client: { select: { nomComplet: true, telephone: true } },
+        },
       });
+
+      if (codeDeblocageValide) {
+        await tx.codeDeblocageRemise.update({
+          where: { id: codeDeblocageValide.id },
+          data: { utilise: true, utiliseAt: new Date(), venteId: vente.id },
+        });
+      }
 
       for (const ligne of vente.lignes) {
         await appliquerMouvementStock(tx, {
