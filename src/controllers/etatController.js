@@ -231,9 +231,11 @@ async function fermetureCaisse(req, res) {
   const ventes = await prisma.vente.findMany({ where: whereVente, include: { paiements: true } });
 
   const parMode = {};
+  let totalVentesJour = 0;
   for (const v of ventes) {
     for (const p of v.paiements) {
       parMode[p.mode] = (parMode[p.mode] || 0) + Number(p.montant);
+      totalVentesJour += Number(p.montant);
     }
   }
 
@@ -243,13 +245,16 @@ async function fermetureCaisse(req, res) {
   for (const r of reglements) {
     parMode[r.mode] = (parMode[r.mode] || 0) + Number(r.montant);
   }
+  const totalReglementsCredit = reglements.reduce((s, r) => s + Number(r.montant), 0);
 
   const whereCyclesJour = { dateActivation: { gte: debut, lte: fin } };
   if (lieuId) whereCyclesJour.lieuId = Number(lieuId);
   const cyclesCartesCadeauxJour = await prisma.carteCadeauCycle.findMany({ where: whereCyclesJour });
+  let totalCartesCadeauxActivees = 0;
   for (const c of cyclesCartesCadeauxJour) {
     if (!c.modePaiement) continue;
     parMode[c.modePaiement] = (parMode[c.modePaiement] || 0) + Number(c.denomination);
+    totalCartesCadeauxActivees += Number(c.denomination);
   }
 
   const totalEncaisse = Object.values(parMode).reduce((s, m) => s + m, 0);
@@ -262,6 +267,11 @@ async function fermetureCaisse(req, res) {
     nombreVentes: ventes.length,
     parModePaiement: Object.entries(parMode).map(([mode, montant]) => ({ mode, montant })),
     totalEncaisse,
+    detailEcart: {
+      totalVentesJour,
+      totalReglementsCredit,
+      totalCartesCadeauxActivees,
+    },
     avoirsEmis: { nombre: avoirsEmis.length, montant: avoirsEmis.reduce((s, a) => s + Number(a.montant), 0) },
     avoirsUtilises: { nombre: avoirsUtilises.length, montant: avoirsUtilises.reduce((s, a) => s + Number(a.montant), 0) },
   });
