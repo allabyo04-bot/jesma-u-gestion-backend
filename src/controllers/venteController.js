@@ -3,8 +3,7 @@ const { appliquerMouvementStock } = require('../lib/stock');
 const { enregistrerActivite } = require('../lib/journal');
 const { hacherCode } = require('./remiseParametreController');
 
-const SEUIL_FIDELITE_MONTANT = 20000;
-const SEUIL_FIDELITE_ACHATS = 10;
+const { SEUIL_FIDELITE_MONTANT, SEUIL_FIDELITE_ACHATS, estClientSansFidelite } = require('../lib/fidelite');
 
 function genererNumeroVente() {
   const maintenant = new Date();
@@ -18,7 +17,7 @@ function genererNumeroVente() {
 // La colonne achatsConsecutifs garde son ancien nom, mais ne compte plus « de suite ».
 async function mettreAJourFidelite(tx, clientId, totalNet) {
   const client = await tx.client.findUnique({ where: { id: clientId } });
-  if (!client || client.estComptoir) return;
+  if (!client || estClientSansFidelite(client)) return;
 
   if (Number(totalNet) < SEUIL_FIDELITE_MONTANT) return;
 
@@ -39,6 +38,22 @@ async function mettreAJourFidelite(tx, clientId, totalNet) {
       data: { achatsConsecutifs: nouveauCompteur, montantCumuleConsecutif: nouveauCumul },
     });
   }
+}
+
+// Annulation d'une vente d'au moins 20 000 F : le point gagné à cette vente est retiré
+// (sans jamais descendre sous 0). Si cette vente avait déclenché une récompense, elle
+// reste créée : c'est à la boutique de décider de la retirer ou non.
+async function retirerPointFidelite(tx, clientId, totalNet) {
+  if (!clientId || Number(totalNet) < SEUIL_FIDELITE_MONTANT) return;
+  const client = await tx.client.findUnique({ where: { id: clientId } });
+  if (!client || estClientSansFidelite(client)) return;
+  await tx.client.update({
+    where: { id: clientId },
+    data: {
+      achatsConsecutifs: Math.max(0, client.achatsConsecutifs - 1),
+      montantCumuleConsecutif: Math.max(0, Number(client.montantCumuleConsecutif) - Number(totalNet)),
+    },
+  });
 }
 
 // POST /api/ventes
@@ -365,6 +380,8 @@ async function annulerVente(req, res) {
         description: `Vente ${vente.numero} annulée (${Number(vente.totalNet).toLocaleString('fr-FR')} F)${motif ? ' — motif : ' + motif : ''}`,
         utilisateurId,
       });
+
+      await retirerPointFidelite(tx, vente.clientId, vente.totalNet);
 
       return tx.vente.update({
         where: { id },

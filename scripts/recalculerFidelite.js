@@ -11,13 +11,13 @@
 //   node scripts/recalculerFidelite.js appliquer  -> applique, en tout ou rien
 //
 // Sans danger à relancer : le résultat du calcul est toujours le même.
+// Les comptes génériques (ex. « Livraison ») sont ignorés.
 // Si un client dépasse 10 après recalcul, il a mérité une récompense qu'il n'a
 // pas reçue : le script ne la crée pas, il le signale, et la récompense sera
 // créée automatiquement à son prochain achat d'au moins 20 000 F.
 const prisma = require('../src/lib/prisma');
 
-const SEUIL_FIDELITE_MONTANT = 20000;
-const SEUIL_FIDELITE_ACHATS = 10;
+const { SEUIL_FIDELITE_MONTANT, SEUIL_FIDELITE_ACHATS, estClientSansFidelite } = require('../src/lib/fidelite');
 // Date de mise en service du logiciel : les ventes importées de l'ancien
 // logiciel (antérieures) ne comptent pas.
 const DATE_LANCEMENT = new Date('2026-08-14T00:00:00');
@@ -25,10 +25,13 @@ const DATE_LANCEMENT = new Date('2026-08-14T00:00:00');
 async function main() {
   const appliquer = process.argv[2] === 'appliquer';
 
-  const clients = await prisma.client.findMany({
+  const tousLesClients = await prisma.client.findMany({
     where: { estComptoir: false },
     orderBy: { nomComplet: 'asc' },
   });
+  // Comptes génériques (ex. « Livraison ») : pas de fidélité, ignorés ici.
+  const clients = tousLesClients.filter((c) => !estClientSansFidelite(c));
+  const ignores = tousLesClients.filter((c) => estClientSansFidelite(c)).map((c) => c.nomComplet);
 
   const ventes = await prisma.vente.findMany({
     where: {
@@ -73,6 +76,7 @@ async function main() {
   }
 
   console.log(`[fidelite] ${clients.length} client(s) examiné(s), ${nbDejaCorrects} déjà correct(s), ${modifications.length} à corriger.`);
+  if (ignores.length > 0) console.log(`[fidelite] Comptes génériques ignorés : ${ignores.join(', ')}`);
   for (const m of modifications) {
     console.log(`  - ${m.nom} : ${m.ancien} -> ${m.nouveau}`);
   }
