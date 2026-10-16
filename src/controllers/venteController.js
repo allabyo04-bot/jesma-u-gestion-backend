@@ -11,17 +11,16 @@ function genererNumeroVente() {
   return `V-${maintenant.getTime()}`;
 }
 
+// Règle (décidée avec la boutique, oct. 2026) : chaque achat d'au moins 20 000 F
+// ajoute 1 au compteur du client ; un achat en dessous de 20 000 F ne change
+// rien (le compteur n'est JAMAIS remis à 0 par un petit achat). À 10, une
+// récompense est créée et le compteur repart de 0.
+// La colonne achatsConsecutifs garde son ancien nom, mais ne compte plus « de suite ».
 async function mettreAJourFidelite(tx, clientId, totalNet) {
   const client = await tx.client.findUnique({ where: { id: clientId } });
   if (!client || client.estComptoir) return;
 
-  if (Number(totalNet) < SEUIL_FIDELITE_MONTANT) {
-    await tx.client.update({
-      where: { id: clientId },
-      data: { achatsConsecutifs: 0, montantCumuleConsecutif: 0 },
-    });
-    return;
-  }
+  if (Number(totalNet) < SEUIL_FIDELITE_MONTANT) return;
 
   const nouveauCompteur = client.achatsConsecutifs + 1;
   const nouveauCumul = Number(client.montantCumuleConsecutif) + Number(totalNet);
