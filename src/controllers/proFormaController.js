@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { enregistrerActivite } = require('../lib/journal');
 
 function genererNumeroProForma() {
   return `PF-${Date.now()}`;
@@ -70,6 +71,66 @@ async function obtenirProForma(req, res) {
   });
   if (!proForma) return res.status(404).json({ error: 'Facture pro forma introuvable.' });
   res.json(proForma);
+}
+
+// PUT /api/proforma/:id   body: { clientId?, lignes: [{ articleId, quantite, prixUnitaire }] }
+// Modifie une pro forma encore EN_ATTENTE (ajouter/retirer des articles, changer
+// quantités ou prix, changer de client). Le numéro ne change pas. Une pro forma déjà
+// transformée en vente (UTILISEE) ou annulée ne peut plus être modifiée.
+// Les lignes sont remplacées en bloc, dans une transaction (tout ou rien), et la
+// modification est inscrite au journal d'activité.
+async function modifierProForma(req, res) {
+  const id = Number(req.params.id);
+  const { clientId, lignes } = req.body;
+
+  if (!Array.isArray(lignes) || lignes.length === 0) {
+    return res.status(400).json({ error: 'Au moins une ligne est requise.' });
+  }
+  for (const l of lignes) {
+    if (!Number.isInteger(Number(l.articleId)) || !(Number(l.quantite) >= 1) || !(Number(l.prixUnitaire) >= 0)) {
+      return res.status(400).json({ error: 'Chaque ligne doit avoir un article, une quantité (1 minimum) et un prix valides.' });
+    }
+  }
+
+  try {
+    const misAJour = await prisma.$transaction(async (tx) => {
+      const actuelle = await tx.factureProForma.findUnique({ where: { id }, include: { lignes: true } });
+      if (!actuelle) throw Object.assign(new Error('Facture pro forma introuvable.'), { statut: 404 });
+      if (actuelle.statut !== 'EN_ATTENTE') {
+        throw Object.assign(new Error('Seule une facture en attente peut être modifiée.'), { statut: 400 });
+      }
+
+      const totalHT = lignes.reduce((s, l) => s + Number(l.prixUnitaire) * Number(l.quantite), 0);
+
+      await tx.ligneFactureProForma.deleteMany({ where: { factureProFormaId: id } });
+      const maj = await tx.factureProForma.update({
+        where: { id },
+        data: {
+          totalHT,
+          ...(clientId ? { clientId: Number(clientId) } : {}),
+          lignes: {
+            create: lignes.map((l) => ({
+              articleId: Number(l.articleId),
+              quantite: Number(l.quantite),
+              prixUnitaire: l.prixUnitaire,
+            })),
+          },
+        },
+        include: { lignes: { include: { article: true } }, client: true },
+      });
+
+      await enregistrerActivite(tx, {
+        type: 'MODIFICATION_PROFORMA',
+        description: `Pro forma ${actuelle.numero} modifiée : ${actuelle.lignes.length} → ${lignes.length} article(s), total ${Number(actuelle.totalHT)} → ${totalHT} F.`,
+        utilisateurId: req.user.id,
+      });
+      return maj;
+    });
+
+    res.json(misAJour);
+  } catch (err) {
+    res.status(err.statut || 400).json({ error: err.message });
+  }
 }
 
 // POST /api/proforma/:id/annuler
@@ -167,5 +228,5 @@ async function imprimerProForma(req, res) {
 }
 
 module.exports = {
-  creerProForma, listerProFormas, obtenirProForma, annulerProForma, imprimerProForma,
+  creerProForma, listerProFormas, obtenirProForma, modifierProForma, annulerProForma, imprimerProForma,
 };
