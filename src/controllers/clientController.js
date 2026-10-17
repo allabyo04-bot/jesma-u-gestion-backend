@@ -7,7 +7,20 @@ async function listerClients(req, res) {
     ? { OR: [{ nomComplet: { contains: q, mode: 'insensitive' } }, { telephone: { contains: q } }] }
     : {};
   const clients = await prisma.client.findMany({ where, orderBy: { nomComplet: 'asc' } });
-  res.json(clients);
+
+  // Avoir encore disponible par client (somme des avoirs ACTIFS issus de ses ventes),
+  // pour l'afficher directement sur la carte du client dans la liste.
+  const avoirsActifs = await prisma.avoir.findMany({
+    where: { statut: 'ACTIF', venteOrigine: { clientId: { not: null } } },
+    select: { montant: true, venteOrigine: { select: { clientId: true } } },
+  });
+  const totalParClient = {};
+  for (const a of avoirsActifs) {
+    const cid = a.venteOrigine.clientId;
+    totalParClient[cid] = (totalParClient[cid] || 0) + Number(a.montant);
+  }
+
+  res.json(clients.map((c) => ({ ...c, avoirActifTotal: totalParClient[c.id] || 0 })));
 }
 
 // POST /api/clients   { nomComplet, telephone, email? }
@@ -36,7 +49,18 @@ async function obtenirClient(req, res) {
     },
   });
   if (!client) return res.status(404).json({ error: 'Client introuvable.' });
-  res.json(client);
+
+  // Avoirs de la cliente : ceux issus de ses achats (retours), utilisés ou non.
+  const avoirs = await prisma.avoir.findMany({
+    where: { venteOrigine: { clientId: client.id } },
+    include: {
+      venteOrigine: { select: { numero: true } },
+      venteUtilisation: { select: { numero: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.json({ ...client, avoirs });
 }
 
 // PUT /api/clients/:id   { nomComplet?, telephone?, email? }
